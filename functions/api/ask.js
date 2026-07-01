@@ -1,14 +1,29 @@
 import rapaData from '../../src/data/rapaData.json';
 
-export async function onRequestPost(context) {
-  const DB = context.env.DB;
-  const GEMINI_API_KEY = context.env.GEMINI_API_KEY;
-  const OPENAI_API_KEY = context.env.OPENAI_API_KEY;
+// 安全驗證 Helper
+function authorize(request, env) {
+  const correctPassword = env.ACCESS_PASSWORD || 'rapa123';
+  const authHeader = request.headers.get('Authorization');
+  return authHeader === correctPassword;
+}
 
+export async function onRequestPost(context) {
   const headers = {
     'Content-Type': 'application/json; charset=utf-8',
     'Access-Control-Allow-Origin': '*'
   };
+
+  // 安全攔截
+  if (!authorize(context.request, context.env)) {
+    return new Response(JSON.stringify({ error: 'Unauthorized', message: '認證失敗，請輸入正確密碼。' }), {
+      status: 401,
+      headers
+    });
+  }
+
+  const DB = context.env.DB;
+  const GEMINI_API_KEY = context.env.GEMINI_API_KEY;
+  const OPENAI_API_KEY = context.env.OPENAI_API_KEY;
 
   try {
     const { question } = await context.request.json();
@@ -101,7 +116,6 @@ export async function onRequestPost(context) {
     let jsonResult = null;
 
     if (GEMINI_API_KEY) {
-      // 呼叫 Gemini API 並且開啟 Google Search Grounding！
       const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`;
       const geminiRes = await fetch(geminiUrl, {
         method: 'POST',
@@ -113,7 +127,7 @@ export async function onRequestPost(context) {
             }]
           }],
           tools: [{
-            googleSearch: {} // 啟用 Gemini 官方的 Google Search 聯網工具
+            googleSearch: {}
           }]
         })
       });
@@ -130,7 +144,6 @@ export async function onRequestPost(context) {
       jsonResult = JSON.parse(cleanJsonText);
 
     } else if (OPENAI_API_KEY) {
-      // 呼叫 OpenAI API
       const openaiRes = await fetch('https://api.openai.com/v1/chat/completions', {
         method: 'POST',
         headers: {
@@ -177,7 +190,7 @@ export async function onRequestOptions() {
     headers: {
       'Access-Control-Allow-Origin': '*',
       'Access-Control-Allow-Methods': 'POST, OPTIONS',
-      'Access-Control-Allow-Headers': 'Content-Type'
+      'Access-Control-Allow-Headers': 'Content-Type, Authorization'
     }
   });
 }

@@ -66,6 +66,14 @@ function App() {
   const [askError, setAskError] = useState('');
   const [isImporting, setIsImporting] = useState(false);
 
+  // Authentication states
+  const [isAuthenticated, setIsAuthenticated] = useState(() => {
+    return !!sessionStorage.getItem('rapa_auth_key');
+  });
+  const [passwordInput, setPasswordInput] = useState('');
+  const [isAuthenticating, setIsAuthenticating] = useState(false);
+  const [authError, setAuthError] = useState('');
+
   // RWD Detection
   const [isMobile, setIsMobile] = useState(() => typeof window !== 'undefined' && window.innerWidth < 768);
 
@@ -97,13 +105,21 @@ function App() {
     };
   });
 
+  // Get HTTP Authorization headers
+  const getHeaders = () => {
+    return {
+      'Content-Type': 'application/json',
+      'Authorization': sessionStorage.getItem('rapa_auth_key') || ''
+    };
+  };
+
   // Fetch Cloudflare D1 Database on load
   const loadDatabase = async () => {
     try {
-      const videoRes = await fetch('/api/videos');
+      const videoRes = await fetch('/api/videos', { headers: getHeaders() });
       const videoResult = await videoRes.json();
       
-      const conceptRes = await fetch('/api/concepts');
+      const conceptRes = await fetch('/api/concepts', { headers: getHeaders() });
       const conceptResult = await conceptRes.json();
 
       if (videoResult.success && conceptResult.success) {
@@ -131,8 +147,10 @@ function App() {
   };
 
   useEffect(() => {
-    loadDatabase();
-  }, []);
+    if (isAuthenticated) {
+      loadDatabase();
+    }
+  }, [isAuthenticated]);
 
   // Collect all unique tags for tag cloud
   const allTags = useMemo(() => {
@@ -180,6 +198,35 @@ function App() {
     }
   };
 
+  // Auth password verify submit
+  const handleLogin = async (e) => {
+    e.preventDefault();
+    if (!passwordInput) return;
+
+    setIsAuthenticating(true);
+    setAuthError('');
+
+    try {
+      const res = await fetch('/api/auth', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password: passwordInput })
+      });
+      const result = await res.json();
+
+      if (res.ok && result.success) {
+        sessionStorage.setItem('rapa_auth_key', passwordInput);
+        setIsAuthenticated(true);
+      } else {
+        setAuthError(result.error || '金鑰認證失敗！');
+      }
+    } catch (err) {
+      setAuthError('連線錯誤，無法完成身份認證。');
+    } finally {
+      setIsAuthenticating(false);
+    }
+  };
+
   // AI Q&A Submit Logic
   const handleAskAi = async (e) => {
     e.preventDefault();
@@ -192,7 +239,7 @@ function App() {
     try {
       const res = await fetch('/api/ask', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: getHeaders(),
         body: JSON.stringify({ question: userQuestion.trim() })
       });
       const result = await res.json();
@@ -213,7 +260,6 @@ function App() {
   // Click handler to jump directly to sources
   const handleSourceClick = (source) => {
     if (source.type === 'video') {
-      // Find video in database
       const foundVideo = localData.videos.find(v => 
         v.title.toLowerCase().includes(source.title.toLowerCase()) || 
         (v.youtubeId && source.youtubeId && v.youtubeId === source.youtubeId) ||
@@ -224,7 +270,6 @@ function App() {
         setActiveTab('videos');
         handleSelectVideo(foundVideo);
 
-        // Optional: Extract time anchor from title (e.g., "03:45")
         const timeMatch = source.title.match(/(\d{1,2}):(\d{2})/);
         if (timeMatch) {
           const mins = parseInt(timeMatch[1], 10);
@@ -232,7 +277,6 @@ function App() {
           const totalSeconds = mins * 60 + secs;
           setCurrentTimestamp(totalSeconds);
 
-          // Find exact timestamp in notes
           const closestIndex = foundVideo.notes.findIndex(n => n.timestamp === totalSeconds || Math.abs(n.timestamp - totalSeconds) < 6);
           if (closestIndex !== -1) {
             setActiveNoteIndex(closestIndex);
@@ -242,7 +286,6 @@ function App() {
         window.open(source.url, '_blank');
       }
     } else if (source.type === 'concept') {
-      // Find concept card
       const foundConcept = localData.concepts.find(c => 
         c.title.toLowerCase().includes(source.title.toLowerCase())
       );
@@ -253,7 +296,6 @@ function App() {
           const element = document.getElementById(foundConcept.id);
           if (element) {
             element.scrollIntoView({ behavior: 'smooth', block: 'center' });
-            // Add momentary highlight glow effect
             element.style.boxShadow = '0 0 25px var(--primary-glow)';
             setTimeout(() => {
               element.style.boxShadow = 'none';
@@ -262,7 +304,6 @@ function App() {
         }, 150);
       }
     } else {
-      // Web search URL
       window.open(source.url, '_blank');
     }
   };
@@ -293,7 +334,7 @@ function App() {
     try {
       const writeResponse = await fetch(apiPath, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: getHeaders(),
         body: JSON.stringify(newItem)
       });
       const writeResult = await writeResponse.json();
@@ -323,7 +364,6 @@ function App() {
       alert(`💾 成功將《${newItem.title}》加入此裝置的瀏覽器快取 (LocalStorage) 中！\n已即時顯示在您的網頁中。`);
     }
 
-    // 清除建議區塊防重複點選
     setAiResponse(prev => ({ ...prev, suggested_import: null }));
   };
 
@@ -340,7 +380,9 @@ function App() {
     setIsParsing(true);
 
     try {
-      const apiResponse = await fetch(`/api/parse?url=${encodeURIComponent(targetUrl)}`);
+      const apiResponse = await fetch(`/api/parse?url=${encodeURIComponent(targetUrl)}`, {
+        headers: getHeaders()
+      });
       const apiResult = await apiResponse.json();
       
       if (apiResponse.ok && apiResult.success && apiResult.data) {
@@ -503,12 +545,10 @@ function App() {
         notes: notesArr
       };
 
-      // 1. 保險起見寫入本地 LocalStorage
       const savedVideos = JSON.parse(localStorage.getItem('rapa_user_videos') || '[]');
       savedVideos.push(newObj);
       localStorage.setItem('rapa_user_videos', JSON.stringify(savedVideos));
 
-      // 2. 更新 React 當前顯示 State
       setLocalData(prev => ({
         ...prev,
         videos: [...prev.videos, newObj]
@@ -523,12 +563,10 @@ function App() {
         description: formConceptDescription
       };
 
-      // 1. 保險起見寫入本地 LocalStorage
       const savedConcepts = JSON.parse(localStorage.getItem('rapa_user_concepts') || '[]');
       savedConcepts.push(newObj);
       localStorage.setItem('rapa_user_concepts', JSON.stringify(savedConcepts));
 
-      // 2. 更新 React 當前顯示 State
       setLocalData(prev => ({
         ...prev,
         concepts: [...prev.concepts, newObj]
@@ -541,7 +579,7 @@ function App() {
     try {
       const writeResponse = await fetch(apiPath, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: getHeaders(),
         body: JSON.stringify(newObj)
       });
       const writeResult = await writeResponse.json();
@@ -568,7 +606,6 @@ function App() {
       // 忽略，在線上必定 404
     }
 
-    // 5. 提示儲存狀態
     if (d1WriteSuccess) {
       alert('✨ 成功！資料已寫入 Cloudflare D1 雲端資料庫！\n您的手機、iPad 以及其他電腦現在重新整理皆可同步看見！');
     } else if (localFileSuccess) {
@@ -577,7 +614,6 @@ function App() {
       alert('💾 成功！資料已安全保存於您此裝置的瀏覽器快取 (LocalStorage) 中，網頁已即時更新！\n\n提示：因為您的 Cloudflare D1 尚未綁定，若要開啟全平台手機/iPad同步，請依照 README.md 初始化 D1。');
     }
 
-    // 清空表單
     if (activeFormTab === 'video') {
       setFormTitle('');
       setFormUrl('');
@@ -595,6 +631,89 @@ function App() {
     setIsParsing(false);
   };
 
+  // UNVERIFIED SCREEN RENDERING (Rich Aesthetics password lock screen)
+  if (!isAuthenticated) {
+    return (
+      <div className="app-container" style={{ justifyContent: 'center', alignItems: 'center', minHeight: '100vh', background: 'radial-gradient(circle at center, #0e1630 0%, #050814 100%)', padding: '1rem' }}>
+        <div className="glass-panel" style={{ width: '100%', maxWidth: '400px', padding: '2.5rem', textAlign: 'center', border: '1px solid rgba(0, 240, 255, 0.15)', boxShadow: '0 0 40px rgba(0, 240, 255, 0.08)' }}>
+          
+          <div style={{ 
+            display: 'inline-flex', 
+            alignItems: 'center', 
+            justifyContent: 'center', 
+            width: '64px', 
+            height: '64px', 
+            borderRadius: '50%', 
+            background: 'rgba(0, 240, 255, 0.05)', 
+            border: '1px solid var(--primary)', 
+            color: 'var(--primary)', 
+            marginBottom: '1.5rem',
+            boxShadow: '0 0 20px var(--primary-glow)',
+            alignSelf: 'center'
+          }}>
+            <Music size={32} className="animate-pulse" />
+          </div>
+
+          <h1 style={{ fontFamily: 'var(--display-font)', fontSize: '1.75rem', fontWeight: 800, marginBottom: '0.5rem', color: '#fff' }}>
+            Rapa Trumpet Library
+          </h1>
+          <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', marginBottom: '2rem' }}>
+            本小號教學系統已受加密保護，請輸入管理員金鑰解鎖以存取。
+          </p>
+
+          {authError && (
+            <div style={{ 
+              display: 'flex', 
+              alignItems: 'center', 
+              gap: '0.5rem', 
+              padding: '0.75rem 1rem', 
+              borderRadius: '8px', 
+              background: 'rgba(239, 68, 68, 0.08)', 
+              border: '1px solid rgba(239, 68, 68, 0.25)', 
+              color: '#ef4444', 
+              fontSize: '0.82rem', 
+              marginBottom: '1.5rem',
+              textAlign: 'left'
+            }}>
+              <AlertCircle size={16} style={{ flexShrink: 0 }} />
+              <span>{authError}</span>
+            </div>
+          )}
+
+          <form onSubmit={handleLogin}>
+            <div className="form-group" style={{ textAlign: 'left' }}>
+              <label className="form-label" style={{ fontSize: '0.8rem' }}>管理員金鑰 (存取密碼)</label>
+              <input 
+                type="password" 
+                className="form-input" 
+                placeholder="請輸入密碼..." 
+                value={passwordInput}
+                onChange={(e) => setPasswordInput(e.target.value)}
+                required
+                autoFocus
+                style={{ textAlign: 'center', letterSpacing: '0.2rem', background: 'rgba(10, 14, 28, 0.8)' }}
+              />
+            </div>
+            <button 
+              type="submit" 
+              className="form-submit-btn" 
+              style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem', marginTop: '1.5rem' }}
+              disabled={isAuthenticating}
+            >
+              {isAuthenticating ? <Loader2 className="animate-spin" size={18} /> : <Compass size={18} />}
+              {isAuthenticating ? '驗證金鑰中...' : '解鎖並進入系統'}
+            </button>
+          </form>
+          
+          <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '2rem' }}>
+            提示：系統預設密碼為 <code>rapa123</code>。若已在 Cloudflare Pages 設定 <code>ACCESS_PASSWORD</code>，請使用設定的密碼。
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  // AUTHENTICATED SCREEN RENDERING
   return (
     <div className="app-container">
       

@@ -1,11 +1,27 @@
 import rapaData from '../../src/data/rapaData.json';
 
+// 安全驗證 Helper
+function authorize(request, env) {
+  const correctPassword = env.ACCESS_PASSWORD || 'rapa123';
+  const authHeader = request.headers.get('Authorization');
+  return authHeader === correctPassword;
+}
+
 export async function onRequestGet(context) {
-  const DB = context.env.DB;
   const headers = {
     'Content-Type': 'application/json; charset=utf-8',
     'Access-Control-Allow-Origin': '*'
   };
+
+  // 安全攔截
+  if (!authorize(context.request, context.env)) {
+    return new Response(JSON.stringify({ error: 'Unauthorized', message: '認證失敗，請輸入正確密碼。' }), {
+      status: 401,
+      headers
+    });
+  }
+
+  const DB = context.env.DB;
 
   if (!DB) {
     return new Response(JSON.stringify({ 
@@ -16,7 +32,6 @@ export async function onRequestGet(context) {
   }
 
   try {
-    // 查詢 D1 中自訂新增的觀念/文章
     const { results } = await DB.prepare("SELECT * FROM concepts ORDER BY created_at DESC").all();
     
     const customConcepts = results.map(row => ({
@@ -26,7 +41,6 @@ export async function onRequestGet(context) {
       description: row.description
     }));
 
-    // 合併預設觀念與資料庫自訂觀念
     const conceptMap = new Map();
     rapaData.concepts.forEach(c => conceptMap.set(c.id, c));
     customConcepts.forEach(c => conceptMap.set(c.id, c));
@@ -45,11 +59,20 @@ export async function onRequestGet(context) {
 }
 
 export async function onRequestPost(context) {
-  const DB = context.env.DB;
   const headers = {
     'Content-Type': 'application/json; charset=utf-8',
     'Access-Control-Allow-Origin': '*'
   };
+
+  // 安全攔截
+  if (!authorize(context.request, context.env)) {
+    return new Response(JSON.stringify({ error: 'Unauthorized', message: '認證失敗，請輸入正確密碼。' }), {
+      status: 401,
+      headers
+    });
+  }
+
+  const DB = context.env.DB;
 
   if (!DB) {
     return new Response(JSON.stringify({ success: false, error: 'Cloudflare D1 未綁定，無法在線上寫入。' }), {
@@ -61,7 +84,6 @@ export async function onRequestPost(context) {
   try {
     const newItem = await context.request.json();
     
-    // 驗證必要欄位
     if (!newItem.id || !newItem.title || !newItem.description) {
       return new Response(JSON.stringify({ success: false, error: '缺少必要欄位' }), {
         status: 400,
@@ -69,7 +91,6 @@ export async function onRequestPost(context) {
       });
     }
 
-    // 寫入 D1
     await DB.prepare(
       "INSERT INTO concepts (id, title, url, description) VALUES (?, ?, ?, ?)"
     ).bind(
@@ -93,7 +114,7 @@ export async function onRequestOptions() {
     headers: {
       'Access-Control-Allow-Origin': '*',
       'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-      'Access-Control-Allow-Headers': 'Content-Type'
+      'Access-Control-Allow-Headers': 'Content-Type, Authorization'
     }
   });
 }

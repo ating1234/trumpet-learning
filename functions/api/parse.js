@@ -1,18 +1,34 @@
+// 安全驗證 Helper
+function authorize(request, env) {
+  const correctPassword = env.ACCESS_PASSWORD || 'rapa123';
+  const authHeader = request.headers.get('Authorization');
+  return authHeader === correctPassword;
+}
+
 export async function onRequestGet(context) {
+  const headers = {
+    'Content-Type': 'application/json; charset=utf-8',
+    'Access-Control-Allow-Origin': '*'
+  };
+
+  // 安全攔截
+  if (!authorize(context.request, context.env)) {
+    return new Response(JSON.stringify({ error: 'Unauthorized', message: '認證失敗，請輸入正確密碼。' }), {
+      status: 401,
+      headers
+    });
+  }
+
   const { searchParams } = new URL(context.request.url);
   const url = searchParams.get('url');
 
   if (!url) {
     return new Response(JSON.stringify({ error: '缺少 url 參數' }), {
       status: 400,
-      headers: { 
-        'Content-Type': 'application/json; charset=utf-8',
-        'Access-Control-Allow-Origin': '*'
-      }
+      headers
     });
   }
 
-  // 1. 取得 Cloudflare 後端設定的 LLM API 金鑰
   const GEMINI_API_KEY = context.env.GEMINI_API_KEY;
   const OPENAI_API_KEY = context.env.OPENAI_API_KEY;
 
@@ -21,16 +37,12 @@ export async function onRequestGet(context) {
       error: 'no_key',
       message: 'Cloudflare 後端尚未設定 API 金鑰。請在 Cloudflare Pages 的環境變數中設定 GEMINI_API_KEY 或 OPENAI_API_KEY。' 
     }), {
-      status: 200, // 回傳 200 以便前端能讀取 JSON 並優雅地回退 (Fallback) 到基本解析
-      headers: { 
-        'Content-Type': 'application/json; charset=utf-8',
-        'Access-Control-Allow-Origin': '*'
-      }
+      status: 200, 
+      headers
     });
   }
 
   try {
-    // 2. 爬取目標網址的基本 HTML 資訊，用來提取標題與前言描述作為 Prompt 上下文
     let title = '';
     let descriptionText = '';
     
@@ -43,20 +55,17 @@ export async function onRequestGet(context) {
       
       if (pageRes.ok) {
         const html = await pageRes.text();
-        // 提取 <title>
         const titleMatch = html.match(/<title>([^<]+)<\/title>/i);
         if (titleMatch) title = titleMatch[1].trim();
         
-        // 提取 YouTube 或一般網頁 description 描述
         const descMatch = html.match(/<meta\s+name=["']description["']\s+content=["']([^"']+)["']/i) || 
                           html.match(/<meta\s+property=["']og:description["']\s+content=["']([^"']+)["']/i);
         if (descMatch) descriptionText = descMatch[1].trim();
       }
     } catch (e) {
-      console.error('抓取目標網頁 HTML 失敗，將僅使用網址進行 LLM 解析', e);
+      console.error('抓取目標網頁 HTML 失敗', e);
     }
 
-    // 3. 準備發送給 LLM 的 System Prompt 規範
     const systemPrompt = `你是一個專業的小號教學知識整理小助手。請分析以下網頁或影音連結的內容，提煉出該教學的結構化 JSON 數據。
 請「嚴格且僅」輸出一個符合以下結構的 JSON 對象，不要包含任何 markdown 標記（如 \`\`\`json 或是 \`\`\`）：
 {
@@ -75,9 +84,7 @@ export async function onRequestGet(context) {
 
     let jsonResult = null;
 
-    // 4. 根據設定的 API 金鑰調用對應的 LLM
     if (GEMINI_API_KEY) {
-      // 調用 Gemini API (Gemini 2.5 Flash)
       const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`;
       const geminiRes = await fetch(geminiUrl, {
         method: 'POST',
@@ -99,12 +106,10 @@ export async function onRequestGet(context) {
       const resData = await geminiRes.json();
       const rawText = resData.candidates[0].content.parts[0].text;
       
-      // 清理可能含有的 markdown JSON 標記
       const cleanJsonText = rawText.replace(/```json/g, '').replace(/```/g, '').trim();
       jsonResult = JSON.parse(cleanJsonText);
       
     } else if (OPENAI_API_KEY) {
-      // 調用 OpenAI API (GPT-4o mini)
       const openaiRes = await fetch('https://api.openai.com/v1/chat/completions', {
         method: 'POST',
         headers: {
@@ -131,20 +136,22 @@ export async function onRequestGet(context) {
       jsonResult = JSON.parse(rawText);
     }
 
-    return new Response(JSON.stringify({ success: true, data: jsonResult }), {
-      headers: { 
-        'Content-Type': 'application/json; charset=utf-8',
-        'Access-Control-Allow-Origin': '*'
-      }
-    });
+    return new Response(JSON.stringify({ success: true, data: jsonResult }), { headers });
 
   } catch (error) {
     return new Response(JSON.stringify({ error: error.message }), {
       status: 500,
-      headers: { 
-        'Content-Type': 'application/json; charset=utf-8',
-        'Access-Control-Allow-Origin': '*'
-      }
+      headers
     });
   }
+}
+
+export async function onRequestOptions() {
+  return new Response(null, {
+    headers: {
+      'Access-Control-Allow-Origin': '*',
+      'Access-Control-Allow-Methods': 'GET, OPTIONS',
+      'Access-Control-Allow-Headers': 'Content-Type, Authorization'
+    }
+  });
 }
