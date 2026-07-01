@@ -655,7 +655,7 @@ function App() {
           </div>
 
           <h1 style={{ fontFamily: 'var(--display-font)', fontSize: '1.75rem', fontWeight: 800, marginBottom: '0.5rem', color: '#fff' }}>
-            Rapa Trumpet Library
+            Trumpet-Learning
           </h1>
           <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', marginBottom: '2rem' }}>
             本小號教學系統已受加密保護，請輸入管理員金鑰解鎖以存取。
@@ -704,10 +704,6 @@ function App() {
               {isAuthenticating ? '驗證金鑰中...' : '解鎖並進入系統'}
             </button>
           </form>
-          
-          <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '2rem' }}>
-            提示：系統預設密碼為 <code>rapa123</code>。若已在 Cloudflare Pages 設定 <code>ACCESS_PASSWORD</code>，請使用設定的密碼。
-          </p>
         </div>
       </div>
     );
