@@ -16,7 +16,7 @@
 
 本專案支援通過 GitHub 連動實現「每次 push 自動部署」。請依照以下步驟完成雲端部署：
 
-### 第一步：上傳專案到 GitHub
+### 第一步：上傳專案到 GitHub (使用 SSH)
 1. 在您的 GitHub 帳號中建立一個全新的 Repository（儲存庫）。
 2. 在您的本地專案目錄下執行以下指令（將代碼推送到 GitHub）：
    ```bash
@@ -24,7 +24,7 @@
    git add .
    git commit -m "feat: upgrade to Cloudflare Pages fullstack with LLM API"
    git branch -M main
-   git remote add origin https://github.com/您的帳號/您的儲存庫名稱.git
+   git remote add origin git@github.com:您的帳號/您的儲存庫名稱.git
    git push -u origin main
    ```
 
