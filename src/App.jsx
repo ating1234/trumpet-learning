@@ -111,7 +111,6 @@ function App() {
         const savedConcepts = JSON.parse(localStorage.getItem('rapa_user_concepts') || '[]');
         
         const videoMap = new Map();
-        // Order: static data -> Cloudflare D1 -> LocalStorage
         rapaData.videos.forEach(v => videoMap.set(v.id, v));
         videoResult.data.forEach(v => videoMap.set(v.id, v));
         savedVideos.forEach(v => videoMap.set(v.id, v));
@@ -208,6 +207,63 @@ function App() {
       setAskError('連線錯誤，無法與 AI 導師建立連線。');
     } finally {
       setIsAsking(false);
+    }
+  };
+
+  // Click handler to jump directly to sources
+  const handleSourceClick = (source) => {
+    if (source.type === 'video') {
+      // Find video in database
+      const foundVideo = localData.videos.find(v => 
+        v.title.toLowerCase().includes(source.title.toLowerCase()) || 
+        (v.youtubeId && source.youtubeId && v.youtubeId === source.youtubeId) ||
+        v.url === source.url
+      );
+
+      if (foundVideo) {
+        setActiveTab('videos');
+        handleSelectVideo(foundVideo);
+
+        // Optional: Extract time anchor from title (e.g., "03:45")
+        const timeMatch = source.title.match(/(\d{1,2}):(\d{2})/);
+        if (timeMatch) {
+          const mins = parseInt(timeMatch[1], 10);
+          const secs = parseInt(timeMatch[2], 10);
+          const totalSeconds = mins * 60 + secs;
+          setCurrentTimestamp(totalSeconds);
+
+          // Find exact timestamp in notes
+          const closestIndex = foundVideo.notes.findIndex(n => n.timestamp === totalSeconds || Math.abs(n.timestamp - totalSeconds) < 6);
+          if (closestIndex !== -1) {
+            setActiveNoteIndex(closestIndex);
+          }
+        }
+      } else {
+        window.open(source.url, '_blank');
+      }
+    } else if (source.type === 'concept') {
+      // Find concept card
+      const foundConcept = localData.concepts.find(c => 
+        c.title.toLowerCase().includes(source.title.toLowerCase())
+      );
+
+      setActiveTab('concepts');
+      if (foundConcept) {
+        setTimeout(() => {
+          const element = document.getElementById(foundConcept.id);
+          if (element) {
+            element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            // Add momentary highlight glow effect
+            element.style.boxShadow = '0 0 25px var(--primary-glow)';
+            setTimeout(() => {
+              element.style.boxShadow = 'none';
+            }, 2000);
+          }
+        }, 150);
+      }
+    } else {
+      // Web search URL
+      window.open(source.url, '_blank');
     }
   };
 
@@ -323,7 +379,6 @@ function App() {
             setFormDuration('0:00');
           }
         } else {
-          // Concept Tab
           if (llmData.title) setFormConceptTitle(llmData.title);
           
           let desc = llmData.summary || '';
@@ -624,7 +679,7 @@ function App() {
               </div>
             </div>
 
-            {/* NEW Q&A SECTION (RAG AI Agent Assistant) */}
+            {/* Q&A SECTION (RAG AI Agent Assistant with interactive sources) */}
             <div className="glass-panel" style={{ padding: '1.5rem', marginBottom: '1.5rem', border: '1px solid rgba(0, 240, 255, 0.15)', background: 'linear-gradient(135deg, rgba(10, 14, 28, 0.8) 0%, rgba(5, 50, 80, 0.25) 100%)' }}>
               <h2 className="row-title" style={{ color: 'var(--primary)', textShadow: '0 0 10px var(--primary-glow)', marginBottom: '0.5rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                 <Sparkles size={20} className="logo-icon animate-pulse" />
@@ -677,9 +732,48 @@ function App() {
                     {aiResponse.found_in_db ? '✅ AI 導師從您的知識庫中找到了以下教學解答：' : '🌐 知識庫尚未收錄此教學，已為您自 Google 聯網搜尋並提煉如下：'}
                   </div>
                   
-                  <div style={{ fontSize: '0.9rem', color: 'var(--text-main)', lineHeight: '1.6', whiteSpace: 'pre-wrap', marginBottom: '1rem', borderBottom: aiResponse.suggested_import ? '1px solid var(--border-light)' : 'none', paddingBottom: aiResponse.suggested_import ? '1rem' : '0' }}>
+                  <div style={{ fontSize: '0.9rem', color: 'var(--text-main)', lineHeight: '1.6', whiteSpace: 'pre-wrap', marginBottom: '1rem', borderBottom: (aiResponse.sources && aiResponse.sources.length > 0) || aiResponse.suggested_import ? '1px solid var(--border-light)' : 'none', paddingBottom: (aiResponse.sources && aiResponse.sources.length > 0) || aiResponse.suggested_import ? '1rem' : '0' }}>
                     {aiResponse.answer}
                   </div>
+
+                  {/* SOURCES LIST WITH CLICK-TO-JUMP */}
+                  {aiResponse.sources && aiResponse.sources.length > 0 && (
+                    <div style={{ marginTop: '1rem', marginBottom: aiResponse.suggested_import ? '1rem' : '0', paddingBottom: aiResponse.suggested_import ? '1rem' : '0', borderBottom: aiResponse.suggested_import ? '1px dashed var(--border-light)' : 'none' }}>
+                      <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: '0.55rem', display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
+                        <BookOpen size={14} /> 📚 參考來源與延伸學習 (點擊可直接在網頁中開啟/跳轉播放)：
+                      </div>
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem' }}>
+                        {aiResponse.sources.map((src, index) => (
+                          <button
+                            key={index}
+                            onClick={() => handleSourceClick(src)}
+                            style={{
+                              background: 'rgba(0, 240, 255, 0.05)',
+                              border: '1px solid rgba(0, 240, 255, 0.15)',
+                              borderRadius: '6px',
+                              padding: '0.35rem 0.65rem',
+                              fontSize: '0.78rem',
+                              color: 'var(--primary)',
+                              cursor: 'pointer',
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: '0.35rem',
+                              transition: 'all 0.2s',
+                              maxWidth: '100%',
+                              textOverflow: 'ellipsis',
+                              overflow: 'hidden',
+                              whiteSpace: 'nowrap'
+                            }}
+                            onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(0, 240, 255, 0.12)'; e.currentTarget.style.borderColor = 'var(--primary)'; }}
+                            onMouseLeave={(e) => { e.currentTarget.style.background = 'rgba(0, 240, 255, 0.05)'; e.currentTarget.style.borderColor = 'rgba(0, 240, 255, 0.15)'; }}
+                          >
+                            {src.type === 'video' ? <Video size={12} /> : src.type === 'concept' ? <Award size={12} /> : <Link size={12} />}
+                            {src.title}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
 
                   {/* suggested_import (One-click storage button) */}
                   {aiResponse.suggested_import && (
@@ -1068,7 +1162,7 @@ function App() {
 
             <div className="concepts-grid">
               {localData.concepts.map(concept => (
-                <div key={concept.id} className="concept-card glass-panel">
+                <div key={concept.id} id={concept.id} className="concept-card glass-panel" style={{ transition: 'all 0.5s' }}>
                   <div className="concept-header">
                     <Award className="concept-icon" size={28} />
                     <h3 className="concept-title">{concept.title}</h3>

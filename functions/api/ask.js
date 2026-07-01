@@ -63,15 +63,23 @@ export async function onRequestPost(context) {
       contextText += `   內容描述: ${c.description}\n`;
     });
 
-    // 3. 準備發送給 LLM 的 System Prompt 規範
+    // 3. 準備發送給 LLM 的 System Prompt 規範 (要求結構化來源)
     const systemPrompt = `你是一個專業的 Adam Rapa 小號教學智能導師。
 你的任務是回答使用者的吹奏問題。請仔細查閱以下提供的【當前小號知識庫】上下文。
 
 請「嚴格且僅」輸出一個符合以下結構的 JSON 對象，不要包含任何 markdown 標記（如 \`\`\`json 或是 \`\`\`）：
 {
-  "answer": "給使用者的繁體中文答覆。如果答案在資料庫中，請詳細解答並指出答案來自哪部影片(含時間點)或哪個核心觀念。如果資料庫沒有相關內容，請基於您對 Adam Rapa 教學理念的了解或網路搜尋回答，並誠實說明這是來自庫外/網路搜尋的 Adam Rapa 教學解答。",
-  "found_in_db": true, // 若答案能在提供的【當前小號知識庫】中找到，設為 true。若資料庫查無或不足，您需要聯網或用您的知識解答，此時設為 false
-  "suggested_import": { // 若 found_in_db 為 false，請基於您的解答或網路搜尋，為使用者提供一個「建議匯入此知識庫」的影音或概念對象。若是影片，必須在 notes 陣列裡產生至少 2-3 個真實/合理的學習重點時間點。若無合適的新資料可匯入，此欄位設為 null。
+  "answer": "給使用者的繁體中文答覆。請詳細解答他的小號問題。",
+  "found_in_db": true, // 若答案能在提供的【當前小號知識庫】中找到，設為 true。若資料庫查無或不足，設為 false
+  "sources": [ // 本次回答所引用的參考來源列表。若答案在資料庫中，請從 Context 中找出對應的影音或觀念項目加入；若是在網路搜尋到的，請加入您參考的外部網址。
+    {
+      "title": "來源影片或觀念文章的精確標題",
+      "url": "來源網址",
+      "type": "video" 或 "concept" 或 "web", // 來自庫內影音、庫內觀念，或是外部網頁
+      "youtubeId": "11位YouTube ID，若是YouTube影音且有的話，否則為空"
+    }
+  ],
+  "suggested_import": { // 若 found_in_db 為 false 且有合適的網路資源，在此附上建議匯入的影音或觀念，無則為 null
     "type": "video" 或 "concept",
     "data": {
       // 若為 video，必須包含: id (唯一字串), title, type ("video"/"shorts"), platform ("YouTube"/"Website"), youtubeId (11位ID，若有), url, duration (時長), thumbnail (圖片網址), tags (陣列), summary (100字摘要), notes (包含 time, timestamp, title, content 的陣列)
@@ -111,7 +119,6 @@ export async function onRequestPost(context) {
       const resData = await geminiRes.json();
       const rawText = resData.candidates[0].content.parts[0].text;
       
-      // 清除可能含有的 markdown JSON 標記
       const cleanJsonText = rawText.replace(/```json/g, '').replace(/```/g, '').trim();
       jsonResult = JSON.parse(cleanJsonText);
 
