@@ -52,6 +52,26 @@
 4. 點選 **Save** 儲存。
 5. **重要**：變數新增後，請至 **Deployments** 頁籤，點選最新一次部署右側的三個點，選擇 **Retry deployment**（重新部署），以便讓環境變數在 Serverless Function 中生效。
 
+### 第四步：配置與初始化 Cloudflare D1 資料庫 (啟用全平台同步)
+為了讓您在手機、iPad 和其他電腦上同步新增的教學資料，請在 Cloudflare 配置 D1 資料庫：
+1. **建立 D1 資料庫**：
+   * 登入 Cloudflare，在左側選單進入 **Workers & Pages** -> 點選 **D1**。
+   * 點選 **Create database** -> 命名為 `adamrapa-db` (您也可以命名為其他，但請記住這個名稱)。
+2. **初始化 D1 資料庫 Table (執行 SQL 腳本)**：
+   * 在您剛建立的 D1 資料庫頁面中，切換到 **Console** 頁籤。
+   * 複製專案根目錄下 `schema.sql` 的完整內容，貼入 Cloudflare Console 中，點選 **Execute** 執行。這會為您建立 `videos` 與 `concepts` 兩個資料表。
+3. **在 Pages 專案中綁定 (Binding) D1 資料庫**：
+   * 進入您的 **Pages 專案** 頁面 -> 點選 **Settings** 頁籤 -> 選擇左側的 **Functions**。
+   * 向下捲動到 **D1 database bindings** 區塊。
+   * 在 **Production** 與 **Preview** 區塊點選 **Add binding**：
+     * **Variable name (變數名稱)**: 必須填入大寫的 `DB`。
+     * **D1 database**: 選擇您剛剛建立的 D1 資料庫名稱（例如 `adamrapa-db`）。
+   * 點選 **Save** 儲存。
+4. **重新部署**：
+   * 前往 **Deployments** 頁籤，將最新一次部署點選「...」選擇 **Retry deployment**（重新部署），以便綁定生效。
+   * *恭喜！現在您的全平台同步資料庫已正式啟用！*
+
+
 ---
 
 ## 💻 本地開發與測試

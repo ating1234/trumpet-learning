@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { 
   Music, 
   Tv, 
@@ -54,7 +54,18 @@ function App() {
   const [formConceptUrl, setFormConceptUrl] = useState('');
   const [formConceptDescription, setFormConceptDescription] = useState('');
 
-  // Dynamic Data loading (Merge rapaData and localStorage for persistent instant additions)
+  // RWD Detection
+  const [isMobile, setIsMobile] = useState(() => typeof window !== 'undefined' && window.innerWidth < 768);
+
+  useEffect(() => {
+    const handleResize = () => {
+      setIsMobile(window.innerWidth < 768);
+    };
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
+
+  // Dynamic Data loading (Merge static rapaData, local storage, and Cloudflare D1)
   const [localData, setLocalData] = useState(() => {
     const savedVideos = JSON.parse(localStorage.getItem('rapa_user_videos') || '[]');
     const savedConcepts = JSON.parse(localStorage.getItem('rapa_user_concepts') || '[]');
@@ -73,6 +84,43 @@ function App() {
       concepts: Array.from(conceptMap.values())
     };
   });
+
+  // Fetch Cloudflare D1 Database on load
+  useEffect(() => {
+    const loadDatabase = async () => {
+      try {
+        const videoRes = await fetch('/api/videos');
+        const videoResult = await videoRes.json();
+        
+        const conceptRes = await fetch('/api/concepts');
+        const conceptResult = await conceptRes.json();
+
+        if (videoResult.success && conceptResult.success) {
+          const savedVideos = JSON.parse(localStorage.getItem('rapa_user_videos') || '[]');
+          const savedConcepts = JSON.parse(localStorage.getItem('rapa_user_concepts') || '[]');
+          
+          const videoMap = new Map();
+          // 順序：預設資料 -> D1 雲端資料 -> 本地 LocalStorage (保險用)
+          rapaData.videos.forEach(v => videoMap.set(v.id, v));
+          videoResult.data.forEach(v => videoMap.set(v.id, v));
+          savedVideos.forEach(v => videoMap.set(v.id, v));
+          
+          const conceptMap = new Map();
+          rapaData.concepts.forEach(c => conceptMap.set(c.id, c));
+          conceptResult.data.forEach(c => conceptMap.set(c.id, c));
+          savedConcepts.forEach(c => conceptMap.set(c.id, c));
+          
+          setLocalData({
+            videos: Array.from(videoMap.values()),
+            concepts: Array.from(conceptMap.values())
+          });
+        }
+      } catch (e) {
+        console.warn('無法連線到 Cloudflare D1。將繼續使用本地快取與預設資料。', e);
+      }
+    };
+    loadDatabase();
+  }, []);
 
   // Collect all unique tags for tag cloud
   const allTags = useMemo(() => {
@@ -133,14 +181,11 @@ function App() {
     setIsParsing(true);
 
     try {
-      // 1. 優先嘗試呼叫 Cloudflare Pages 後端 LLM 解析 API
       const apiResponse = await fetch(`/api/parse?url=${encodeURIComponent(targetUrl)}`);
       const apiResult = await apiResponse.json();
       
       if (apiResponse.ok && apiResult.success && apiResult.data) {
         const llmData = apiResult.data;
-        
-        // 提取 YouTube 相關資訊 (如果是 YouTube)
         const ytMatch = targetUrl.match(/(?:youtube\.com\/(?:[^\/]+\/.+\/|(?:v|e(?:mbed)?)\/|.*[?&]v=)|youtu\.be\/|shorts\/)([^"&?\/\s]{11})/);
         const vid = ytMatch ? ytMatch[1] : '';
         
@@ -149,7 +194,6 @@ function App() {
           if (llmData.summary) setFormSummary(llmData.summary);
           if (llmData.tags && Array.isArray(llmData.tags)) setFormTags(llmData.tags.join(', '));
           
-          // Notes 格式轉換: "時間|大綱標題|詳細筆記內容"
           if (llmData.notes && Array.isArray(llmData.notes)) {
             const formattedNotes = llmData.notes.map(n => {
               const cleanContent = n.content || '';
@@ -176,7 +220,6 @@ function App() {
             setFormDuration('0:00');
           }
         } else {
-          // Concept Tab
           if (llmData.title) setFormConceptTitle(llmData.title);
           
           let desc = llmData.summary || '';
@@ -192,7 +235,6 @@ function App() {
         return;
       }
       
-      // 2. 如果後端回傳無金鑰 (no_key)，或是其他 API 失敗，自動 Fallback 回退至 noembed 基礎解析
       if (apiResult.error === 'no_key') {
         setParseError('💡 提示：您的 Cloudflare 後端尚未設定 API 金鑰。已自動回退為「基本解析」（僅取得標題與縮圖）。若要啟用 LLM 智慧分析自動生成摘要與筆記，請在 Cloudflare Pages Dashboard 中設定環境變數 GEMINI_API_KEY 或 OPENAI_API_KEY。');
       } else {
@@ -219,7 +261,6 @@ function App() {
             setFormDuration('10:00');
           }
         } else {
-          // Concept Tab
           if (data.title) setFormConceptTitle(data.title);
         }
       } else {
@@ -243,7 +284,7 @@ function App() {
     }
   };
 
-  // Save new item dynamically to LocalStorage and attempt local disk write if on dev server
+  // Save new item dynamically to LocalStorage, Cloudflare D1, and local disk (development)
   const handleSaveToDatabase = async (e) => {
     e.preventDefault();
     setIsParsing(true);
@@ -303,7 +344,7 @@ function App() {
         notes: notesArr
       };
 
-      // 1. 保存到 LocalStorage (確保雲端部署重整後依舊存在)
+      // 1. 保險起見寫入本地 LocalStorage
       const savedVideos = JSON.parse(localStorage.getItem('rapa_user_videos') || '[]');
       savedVideos.push(newObj);
       localStorage.setItem('rapa_user_videos', JSON.stringify(savedVideos));
@@ -323,7 +364,7 @@ function App() {
         description: formConceptDescription
       };
 
-      // 1. 保存到 LocalStorage
+      // 1. 保險起見寫入本地 LocalStorage
       const savedConcepts = JSON.parse(localStorage.getItem('rapa_user_concepts') || '[]');
       savedConcepts.push(newObj);
       localStorage.setItem('rapa_user_concepts', JSON.stringify(savedConcepts));
@@ -335,23 +376,46 @@ function App() {
       }));
     }
 
-    // 3. 嘗試寫入本地硬碟 (僅在 npm run dev 本地開發伺服器下有作用)
+    // 3. 呼叫 Cloudflare D1 後端寫入 API (線上資料同步)
+    const apiPath = activeFormTab === 'video' ? '/api/videos' : '/api/concepts';
+    let d1WriteSuccess = false;
     try {
-      const writeResponse = await fetch('/api/save-data', {
+      const writeResponse = await fetch(apiPath, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(newObj)
       });
       const writeResult = await writeResponse.json();
-
       if (writeResponse.ok && writeResult.success) {
-        alert('✨ 成功！資料已同步寫入本地的 rapaData.json 檔案！\nGit 將會偵測到檔案修改，請將其推送至 GitHub 來發布更新。');
-      } else {
-        alert('💾 成功！資料已安全保存於您瀏覽器的本機快取 (LocalStorage) 中，網頁已即時更新顯示！\n\n提示：因為 Cloudflare Pages 雲端為唯讀環境，若要將此更新永久同步到 GitHub 代碼庫中，請於本地執行開發伺服器新增，並執行 git push。');
+        d1WriteSuccess = true;
       }
     } catch (e) {
-      // 雲端或 Wrangler Pages Dev 模式下沒有 save-data API 則會報錯，自動回退使用 LocalStorage
-      alert('💾 成功！資料已安全保存於您瀏覽器的本機快取 (LocalStorage) 中，網頁已即時更新顯示！\n\n提示：因為 Cloudflare Pages 雲端為唯讀環境，若要將此更新永久同步到 GitHub 代碼庫中，請於本地執行開發伺服器新增，並執行 git push。');
+      console.warn('無法連接至 D1 後端 API。已回退到本機儲存機制。', e);
+    }
+
+    // 4. 同步嘗試寫入本地開發 JSON (僅在本地 npm run dev 時有效)
+    let localFileSuccess = false;
+    try {
+      const localResponse = await fetch('/api/save-data', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(newObj)
+      });
+      const localResult = await localResponse.json();
+      if (localResponse.ok && localResult.success) {
+        localFileSuccess = true;
+      }
+    } catch (e) {
+      // 忽略，在線上必定 404
+    }
+
+    // 5. 提示使用者合適的儲存狀態
+    if (d1WriteSuccess) {
+      alert('✨ 成功！資料已寫入 Cloudflare D1 雲端資料庫！\n您的手機、iPad 以及其他電腦現在重新整理皆可同步看見！');
+    } else if (localFileSuccess) {
+      alert('✨ 成功！資料已同步寫入本地的 rapaData.json 檔案！\nGit 已偵測到檔案修改，請將其推送至 GitHub 來發布更新。');
+    } else {
+      alert('💾 成功！資料已安全保存於您此裝置的瀏覽器快取 (LocalStorage) 中，網頁已即時更新！\n\n提示：因為您的 Cloudflare D1 尚未綁定，若要開啟全平台手機/iPad同步，請依照 README.md 初始化 D1。');
     }
 
     // 清空表單
@@ -374,52 +438,71 @@ function App() {
 
   return (
     <div className="app-container">
-      {/* Sidebar Section */}
-      <aside className="sidebar">
-        <div className="logo-container">
-          <Music className="logo-icon" size={28} />
-          <span className="logo-text">Rapa Trumpet</span>
-        </div>
+      
+      {/* SIDEBAR: Hidden on Mobile (< 768px) */}
+      {!isMobile && (
+        <aside className="sidebar">
+          <div className="logo-container">
+            <Music className="logo-icon" size={28} />
+            <span className="logo-text">Rapa Trumpet</span>
+          </div>
 
-        <nav className="nav-links">
-          <button 
-            className={`nav-item ${activeTab === 'dashboard' ? 'active' : ''}`}
-            onClick={() => { setActiveTab('dashboard'); setSelectedVideo(null); }}
-          >
-            <Compass className="nav-icon" />
-            儀表板 Dashboard
-          </button>
-          
-          <button 
-            className={`nav-item ${activeTab === 'videos' ? 'active' : ''}`}
-            onClick={() => { setActiveTab('videos'); }}
-          >
-            <Video className="nav-icon" />
-            教學影音庫 Videos
-          </button>
+          <nav className="nav-links">
+            <button 
+              className={`nav-item ${activeTab === 'dashboard' ? 'active' : ''}`}
+              onClick={() => { setActiveTab('dashboard'); setSelectedVideo(null); }}
+            >
+              <Compass className="nav-icon" />
+              儀表板 Dashboard
+            </button>
+            
+            <button 
+              className={`nav-item ${activeTab === 'videos' ? 'active' : ''}`}
+              onClick={() => { setActiveTab('videos'); }}
+            >
+              <Video className="nav-icon" />
+              教學影音庫 Videos
+            </button>
 
-          <button 
-            className={`nav-item ${activeTab === 'concepts' ? 'active' : ''}`}
-            onClick={() => { setActiveTab('concepts'); setSelectedVideo(null); }}
-          >
-            <BookOpen className="nav-icon" />
-            核心觀念 Concepts
-          </button>
+            <button 
+              className={`nav-item ${activeTab === 'concepts' ? 'active' : ''}`}
+              onClick={() => { setActiveTab('concepts'); setSelectedVideo(null); }}
+            >
+              <BookOpen className="nav-icon" />
+              核心觀念 Concepts
+            </button>
 
-          <button 
-            className={`nav-item ${activeTab === 'add' ? 'active' : ''}`}
-            onClick={() => { setActiveTab('add'); setSelectedVideo(null); }}
-          >
-            <PlusCircle className="nav-icon" />
-            新增教學 Add Data
-          </button>
-        </nav>
+            <button 
+              className={`nav-item ${activeTab === 'add' ? 'active' : ''}`}
+              onClick={() => { setActiveTab('add'); setSelectedVideo(null); }}
+            >
+              <PlusCircle className="nav-icon" />
+              新增教學 Add Data
+            </button>
+          </nav>
 
-        <div className="sidebar-footer">
-          <p>© 2026 Adam Rapa Library</p>
-          <p>小號學習系統知識庫</p>
-        </div>
-      </aside>
+          <div className="sidebar-footer">
+            <p>© 2026 Adam Rapa Library</p>
+            <p>小號學習系統知識庫</p>
+          </div>
+        </aside>
+      )}
+
+      {/* MOBILE HEADER: Shown only on Mobile (< 768px) */}
+      {isMobile && (
+        <header className="mobile-header glass-panel">
+          <div className="logo-container" style={{ margin: 0, padding: 0 }}>
+            <Music className="logo-icon" size={24} />
+            <span className="logo-text" style={{ fontSize: '1.25rem' }}>Rapa Trumpet</span>
+          </div>
+          <div className="mobile-header-active-tab">
+            {activeTab === 'dashboard' && '儀表板'}
+            {activeTab === 'videos' && '影音庫'}
+            {activeTab === 'concepts' && '核心觀念'}
+            {activeTab === 'add' && '新增教學'}
+          </div>
+        </header>
+      )}
 
       {/* Main Content Area */}
       <main className="main-content">
@@ -1099,6 +1182,41 @@ function App() {
         )}
 
       </main>
+
+      {/* BOTTOM NAV BAR: Shown only on Mobile (< 768px) */}
+      {isMobile && (
+        <nav className="mobile-bottom-nav glass-panel">
+          <button 
+            className={`mobile-nav-item ${activeTab === 'dashboard' ? 'active' : ''}`}
+            onClick={() => { setActiveTab('dashboard'); setSelectedVideo(null); }}
+          >
+            <Compass size={20} />
+            <span>儀表板</span>
+          </button>
+          <button 
+            className={`mobile-nav-item ${activeTab === 'videos' ? 'active' : ''}`}
+            onClick={() => { setActiveTab('videos'); }}
+          >
+            <Video size={20} />
+            <span>影音庫</span>
+          </button>
+          <button 
+            className={`mobile-nav-item ${activeTab === 'concepts' ? 'active' : ''}`}
+            onClick={() => { setActiveTab('concepts'); setSelectedVideo(null); }}
+          >
+            <BookOpen size={20} />
+            <span>核心觀念</span>
+          </button>
+          <button 
+            className={`mobile-nav-item ${activeTab === 'add' ? 'active' : ''}`}
+            onClick={() => { setActiveTab('add'); setSelectedVideo(null); }}
+          >
+            <PlusCircle size={20} />
+            <span>新增教學</span>
+          </button>
+        </nav>
+      )}
+
     </div>
   );
 }
