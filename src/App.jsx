@@ -18,7 +18,12 @@ import {
   Link,
   Loader2,
   AlertCircle,
-  Save
+  Save,
+  MessageSquare,
+  HelpCircle,
+  CheckCircle,
+  Globe,
+  Download
 } from 'lucide-react';
 import { rapaData } from './data/rapaData';
 
@@ -54,6 +59,13 @@ function App() {
   const [formConceptUrl, setFormConceptUrl] = useState('');
   const [formConceptDescription, setFormConceptDescription] = useState('');
 
+  // Q&A AI states
+  const [userQuestion, setUserQuestion] = useState('');
+  const [isAsking, setIsAsking] = useState(false);
+  const [aiResponse, setAiResponse] = useState(null);
+  const [askError, setAskError] = useState('');
+  const [isImporting, setIsImporting] = useState(false);
+
   // RWD Detection
   const [isMobile, setIsMobile] = useState(() => typeof window !== 'undefined' && window.innerWidth < 768);
 
@@ -86,39 +98,40 @@ function App() {
   });
 
   // Fetch Cloudflare D1 Database on load
-  useEffect(() => {
-    const loadDatabase = async () => {
-      try {
-        const videoRes = await fetch('/api/videos');
-        const videoResult = await videoRes.json();
-        
-        const conceptRes = await fetch('/api/concepts');
-        const conceptResult = await conceptRes.json();
+  const loadDatabase = async () => {
+    try {
+      const videoRes = await fetch('/api/videos');
+      const videoResult = await videoRes.json();
+      
+      const conceptRes = await fetch('/api/concepts');
+      const conceptResult = await conceptRes.json();
 
-        if (videoResult.success && conceptResult.success) {
-          const savedVideos = JSON.parse(localStorage.getItem('rapa_user_videos') || '[]');
-          const savedConcepts = JSON.parse(localStorage.getItem('rapa_user_concepts') || '[]');
-          
-          const videoMap = new Map();
-          // 順序：預設資料 -> D1 雲端資料 -> 本地 LocalStorage (保險用)
-          rapaData.videos.forEach(v => videoMap.set(v.id, v));
-          videoResult.data.forEach(v => videoMap.set(v.id, v));
-          savedVideos.forEach(v => videoMap.set(v.id, v));
-          
-          const conceptMap = new Map();
-          rapaData.concepts.forEach(c => conceptMap.set(c.id, c));
-          conceptResult.data.forEach(c => conceptMap.set(c.id, c));
-          savedConcepts.forEach(c => conceptMap.set(c.id, c));
-          
-          setLocalData({
-            videos: Array.from(videoMap.values()),
-            concepts: Array.from(conceptMap.values())
-          });
-        }
-      } catch (e) {
-        console.warn('無法連線到 Cloudflare D1。將繼續使用本地快取與預設資料。', e);
+      if (videoResult.success && conceptResult.success) {
+        const savedVideos = JSON.parse(localStorage.getItem('rapa_user_videos') || '[]');
+        const savedConcepts = JSON.parse(localStorage.getItem('rapa_user_concepts') || '[]');
+        
+        const videoMap = new Map();
+        // Order: static data -> Cloudflare D1 -> LocalStorage
+        rapaData.videos.forEach(v => videoMap.set(v.id, v));
+        videoResult.data.forEach(v => videoMap.set(v.id, v));
+        savedVideos.forEach(v => videoMap.set(v.id, v));
+        
+        const conceptMap = new Map();
+        rapaData.concepts.forEach(c => conceptMap.set(c.id, c));
+        conceptResult.data.forEach(c => conceptMap.set(c.id, c));
+        savedConcepts.forEach(c => conceptMap.set(c.id, c));
+        
+        setLocalData({
+          videos: Array.from(videoMap.values()),
+          concepts: Array.from(conceptMap.values())
+        });
       }
-    };
+    } catch (e) {
+      console.warn('無法連線到 Cloudflare D1。將繼續使用本地快取與預設資料。', e);
+    }
+  };
+
+  useEffect(() => {
     loadDatabase();
   }, []);
 
@@ -166,6 +179,96 @@ function App() {
     if (activeTab !== 'videos') {
       setActiveTab('videos');
     }
+  };
+
+  // AI Q&A Submit Logic
+  const handleAskAi = async (e) => {
+    e.preventDefault();
+    if (!userQuestion.trim()) return;
+
+    setIsAsking(true);
+    setAskError('');
+    setAiResponse(null);
+
+    try {
+      const res = await fetch('/api/ask', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ question: userQuestion.trim() })
+      });
+      const result = await res.json();
+      
+      if (res.ok && result.success) {
+        setAiResponse(result.data);
+      } else {
+        setAskError(result.error || '呼叫 AI 導師失敗，請確認 Cloudflare 後端已設定 API 金鑰。');
+      }
+    } catch (err) {
+      console.error('Q&A failed', err);
+      setAskError('連線錯誤，無法與 AI 導師建立連線。');
+    } finally {
+      setIsAsking(false);
+    }
+  };
+
+  // One-click import suggested content from web search
+  const handleImportSuggested = async () => {
+    if (!aiResponse || !aiResponse.suggested_import) return;
+    setIsImporting(true);
+
+    const suggest = aiResponse.suggested_import;
+    const newItem = suggest.data;
+    const isVideo = suggest.type === 'video';
+
+    // 1. 本地 LocalStorage 寫入
+    if (isVideo) {
+      const savedVideos = JSON.parse(localStorage.getItem('rapa_user_videos') || '[]');
+      savedVideos.push(newItem);
+      localStorage.setItem('rapa_user_videos', JSON.stringify(savedVideos));
+    } else {
+      const savedConcepts = JSON.parse(localStorage.getItem('rapa_user_concepts') || '[]');
+      savedConcepts.push(newItem);
+      localStorage.setItem('rapa_user_concepts', JSON.stringify(savedConcepts));
+    }
+
+    // 2. 雲端 D1 資料庫寫入
+    const apiPath = isVideo ? '/api/videos' : '/api/concepts';
+    let cloudSuccess = false;
+    try {
+      const writeResponse = await fetch(apiPath, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(newItem)
+      });
+      const writeResult = await writeResponse.json();
+      if (writeResponse.ok && writeResult.success) {
+        cloudSuccess = true;
+      }
+    } catch (e) {
+      console.warn('雲端 D1 寫入失敗，使用本地 LocalStorage 緩存。', e);
+    }
+
+    // 3. 同步寫入本地 JSON 檔案 (僅本地 dev server 有效)
+    try {
+      fetch('/api/save-data', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(newItem)
+      });
+    } catch (e) {}
+
+    // 重新加載資料庫
+    await loadDatabase();
+    setIsImporting(false);
+    
+    if (cloudSuccess) {
+      alert(`✨ 成功將《${newItem.title}》自動加入 Cloudflare D1 雲端知識庫中！\n其他電腦與手持設備重新整理後已同步！`);
+    } else {
+      alert(`💾 成功將《${newItem.title}》加入此裝置的瀏覽器快取 (LocalStorage) 中！\n已即時顯示在您的網頁中。`);
+    }
+
+    // 清除建議區塊防重複點選
+    setAiResponse(prev => ({ ...prev, suggested_import: null }));
   };
 
   // URL Auto-Parse Logic (Cloudflare Pages Function + Fallback noembed)
@@ -220,6 +323,7 @@ function App() {
             setFormDuration('0:00');
           }
         } else {
+          // Concept Tab
           if (llmData.title) setFormConceptTitle(llmData.title);
           
           let desc = llmData.summary || '';
@@ -284,7 +388,7 @@ function App() {
     }
   };
 
-  // Save new item dynamically to LocalStorage, Cloudflare D1, and local disk (development)
+  // Save new item dynamically
   const handleSaveToDatabase = async (e) => {
     e.preventDefault();
     setIsParsing(true);
@@ -409,7 +513,7 @@ function App() {
       // 忽略，在線上必定 404
     }
 
-    // 5. 提示使用者合適的儲存狀態
+    // 5. 提示儲存狀態
     if (d1WriteSuccess) {
       alert('✨ 成功！資料已寫入 Cloudflare D1 雲端資料庫！\n您的手機、iPad 以及其他電腦現在重新整理皆可同步看見！');
     } else if (localFileSuccess) {
@@ -518,6 +622,104 @@ function App() {
                   歡迎來到 Adam Rapa 教學資料整理庫。在這裡，您可以探索他獨一無二的小號學習與吹奏心法。包含 Wedge Technique、3D 呼吸法與歌唱思維。
                 </p>
               </div>
+            </div>
+
+            {/* NEW Q&A SECTION (RAG AI Agent Assistant) */}
+            <div className="glass-panel" style={{ padding: '1.5rem', marginBottom: '1.5rem', border: '1px solid rgba(0, 240, 255, 0.15)', background: 'linear-gradient(135deg, rgba(10, 14, 28, 0.8) 0%, rgba(5, 50, 80, 0.25) 100%)' }}>
+              <h2 className="row-title" style={{ color: 'var(--primary)', textShadow: '0 0 10px var(--primary-glow)', marginBottom: '0.5rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <Sparkles size={20} className="logo-icon animate-pulse" />
+                🎺 Rapa AI 智能小號導師
+              </h2>
+              <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', marginBottom: '1.25rem' }}>
+                輸入任何關於小號吹奏技巧、呼吸、口型 (Embouchure) 或 Adam Rapa 的觀念問題，AI 會幫您在庫內資料庫進行分析作答；若庫內不足則自動去 Google 聯網搜尋！
+              </p>
+
+              <form onSubmit={handleAskAi} style={{ display: 'flex', gap: '0.75rem', marginBottom: '1rem' }}>
+                <input 
+                  type="text" 
+                  className="form-input" 
+                  placeholder="詢問問題，例如：口唇 Warm down 怎麼練習？或 3D 呼吸法是什麼？"
+                  value={userQuestion}
+                  onChange={(e) => setUserQuestion(e.target.value)}
+                  style={{ flex: 1, background: 'rgba(10, 14, 28, 0.8)', borderColor: 'rgba(0, 240, 255, 0.15)' }}
+                  required
+                />
+                <button
+                  type="submit"
+                  className="form-submit-btn"
+                  style={{ 
+                    width: 'auto', 
+                    padding: '0 1.5rem', 
+                    background: 'linear-gradient(135deg, var(--primary) 0%, #0099ff 100%)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '0.5rem',
+                    whiteSpace: 'nowrap'
+                  }}
+                  disabled={isAsking}
+                >
+                  {isAsking ? <Loader2 size={16} className="animate-spin" /> : <MessageSquare size={16} />}
+                  {isAsking ? '思考中...' : '提問'}
+                </button>
+              </form>
+
+              {askError && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: '#ef4444', fontSize: '0.85rem', padding: '0.5rem 0', borderTop: '1px solid rgba(239, 68, 68, 0.1)' }}>
+                  <AlertCircle size={16} /> {askError}
+                </div>
+              )}
+
+              {/* AI Answer Rendering */}
+              {aiResponse && (
+                <div style={{ marginTop: '1.25rem', padding: '1.25rem', background: 'rgba(10, 14, 28, 0.9)', border: '1px solid var(--border-light)', borderRadius: '12px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.82rem', fontWeight: '700', marginBottom: '0.75rem', color: aiResponse.found_in_db ? 'var(--primary)' : '#10b981' }}>
+                    {aiResponse.found_in_db ? <CheckCircle size={16} /> : <Globe size={16} className="animate-pulse" />}
+                    {aiResponse.found_in_db ? '✅ AI 導師從您的知識庫中找到了以下教學解答：' : '🌐 知識庫尚未收錄此教學，已為您自 Google 聯網搜尋並提煉如下：'}
+                  </div>
+                  
+                  <div style={{ fontSize: '0.9rem', color: 'var(--text-main)', lineHeight: '1.6', whiteSpace: 'pre-wrap', marginBottom: '1rem', borderBottom: aiResponse.suggested_import ? '1px solid var(--border-light)' : 'none', paddingBottom: aiResponse.suggested_import ? '1rem' : '0' }}>
+                    {aiResponse.answer}
+                  </div>
+
+                  {/* suggested_import (One-click storage button) */}
+                  {aiResponse.suggested_import && (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+                      <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
+                        💡 智能導師建議匯入以下搜尋到的新教學資源以充實您的雲端知識庫：
+                      </p>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', background: 'rgba(16, 185, 129, 0.05)', padding: '0.75rem 1rem', borderRadius: '8px', border: '1px dashed rgba(16, 185, 129, 0.25)', fontSize: '0.85rem' }}>
+                        <Award size={16} style={{ color: '#10b981' }} />
+                        <span style={{ color: '#fff', fontWeight: '600', flex: 1, textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap' }}>
+                          《{aiResponse.suggested_import.data.title}》 ({aiResponse.suggested_import.type === 'video' ? '影音教學' : '文字觀念'})
+                        </span>
+                        {aiResponse.suggested_import.data.url && (
+                          <a href={aiResponse.suggested_import.data.url} target="_blank" rel="noreferrer" style={{ color: 'var(--primary)', display: 'inline-flex', alignItems: 'center', gap: '0.1rem', textDecoration: 'none' }}>
+                            原連結 <ExternalLink size={12} />
+                          </a>
+                        )}
+                      </div>
+                      
+                      <button 
+                        onClick={handleImportSuggested}
+                        disabled={isImporting}
+                        className="form-submit-btn"
+                        style={{ 
+                          width: '100%', 
+                          background: 'linear-gradient(135deg, #10b981 0%, #059669 100%)',
+                          boxShadow: '0 4px 15px rgba(16, 185, 129, 0.2)',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          gap: '0.5rem'
+                        }}
+                      >
+                        {isImporting ? <Loader2 size={16} className="animate-spin" /> : <Download size={16} />}
+                        {isImporting ? '正在寫入資料庫...' : '📥 立即將此教學一鍵收錄至我的雲端資料庫'}
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
 
             {/* Quick Stats */}
