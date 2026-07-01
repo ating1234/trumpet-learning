@@ -17,7 +17,8 @@ import {
   Award,
   Link,
   Loader2,
-  AlertCircle
+  AlertCircle,
+  Save
 } from 'lucide-react';
 import { rapaData } from './data/rapaData';
 
@@ -53,20 +54,38 @@ function App() {
   const [formConceptUrl, setFormConceptUrl] = useState('');
   const [formConceptDescription, setFormConceptDescription] = useState('');
 
-  const [generatedData, setGeneratedData] = useState('');
+  // Dynamic Data loading (Merge rapaData and localStorage for persistent instant additions)
+  const [localData, setLocalData] = useState(() => {
+    const savedVideos = JSON.parse(localStorage.getItem('rapa_user_videos') || '[]');
+    const savedConcepts = JSON.parse(localStorage.getItem('rapa_user_concepts') || '[]');
+    
+    // Prevent duplicates by checking ID
+    const videoMap = new Map();
+    rapaData.videos.forEach(v => videoMap.set(v.id, v));
+    savedVideos.forEach(v => videoMap.set(v.id, v));
+    
+    const conceptMap = new Map();
+    rapaData.concepts.forEach(c => conceptMap.set(c.id, c));
+    savedConcepts.forEach(c => conceptMap.set(c.id, c));
+    
+    return {
+      videos: Array.from(videoMap.values()),
+      concepts: Array.from(conceptMap.values())
+    };
+  });
 
   // Collect all unique tags for tag cloud
   const allTags = useMemo(() => {
     const tags = new Set();
-    rapaData.videos.forEach(v => {
+    localData.videos.forEach(v => {
       v.tags.forEach(t => tags.add(t));
     });
     return Array.from(tags);
-  }, []);
+  }, [localData.videos]);
 
   // Filtered videos based on search, tags and platform
   const filteredVideos = useMemo(() => {
-    return rapaData.videos.filter(v => {
+    return localData.videos.filter(v => {
       const matchesSearch = searchQuery === '' || 
         v.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
         v.summary.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -81,7 +100,7 @@ function App() {
         
       return matchesSearch && matchesTag && matchesPlatform;
     });
-  }, [searchQuery, selectedTag, selectedPlatform]);
+  }, [searchQuery, selectedTag, selectedPlatform, localData.videos]);
 
   const handleSelectVideo = (video) => {
     setSelectedVideo(video);
@@ -133,7 +152,6 @@ function App() {
           // Notes 格式轉換: "時間|大綱標題|詳細筆記內容"
           if (llmData.notes && Array.isArray(llmData.notes)) {
             const formattedNotes = llmData.notes.map(n => {
-              // 提取前幾個字作為大綱標題，剩餘為 content
               const cleanContent = n.content || '';
               const shortTitle = cleanContent.slice(0, 12) + (cleanContent.length > 12 ? '...' : '');
               return `${n.time}|${shortTitle}|${cleanContent}`;
@@ -149,7 +167,6 @@ function App() {
               setFormDuration('0:59');
             } else {
               setFormType('video');
-              // 抓取最後一個時間點作為估算長度，若無則給 10:00
               setFormDuration(llmData.notes && llmData.notes.length > 0 ? llmData.notes[llmData.notes.length - 1].time : '10:00');
             }
           } else {
@@ -226,9 +243,13 @@ function App() {
     }
   };
 
-  const handleGenerateData = (e) => {
+  // Save new item dynamically to LocalStorage and attempt local disk write if on dev server
+  const handleSaveToDatabase = async (e) => {
     e.preventDefault();
+    setIsParsing(true);
     
+    let newObj = null;
+
     if (activeFormTab === 'video') {
       const tagsArr = formTags.split(',').map(t => t.trim()).filter(t => t !== '');
       
@@ -268,7 +289,7 @@ function App() {
         ? "https://images.unsplash.com/photo-1465847899084-d164df4dedc6?auto=format&fit=crop&w=600&q=80"
         : "https://images.unsplash.com/photo-1511192336575-5a79af67a629?auto=format&fit=crop&w=600&q=80");
 
-      const newObj = {
+      newObj = {
         id: randomId,
         title: formTitle,
         type: formType,
@@ -282,18 +303,73 @@ function App() {
         notes: notesArr
       };
 
-      setGeneratedData(JSON.stringify(newObj, null, 2));
+      // 1. 保存到 LocalStorage (確保雲端部署重整後依舊存在)
+      const savedVideos = JSON.parse(localStorage.getItem('rapa_user_videos') || '[]');
+      savedVideos.push(newObj);
+      localStorage.setItem('rapa_user_videos', JSON.stringify(savedVideos));
+
+      // 2. 更新 React 當前顯示 State
+      setLocalData(prev => ({
+        ...prev,
+        videos: [...prev.videos, newObj]
+      }));
+
     } else {
       const randomId = "concept-" + Math.floor(Math.random() * 1000);
-      const newObj = {
+      newObj = {
         id: randomId,
         title: formConceptTitle,
         url: formConceptUrl || undefined,
         description: formConceptDescription
       };
 
-      setGeneratedData(JSON.stringify(newObj, null, 2));
+      // 1. 保存到 LocalStorage
+      const savedConcepts = JSON.parse(localStorage.getItem('rapa_user_concepts') || '[]');
+      savedConcepts.push(newObj);
+      localStorage.setItem('rapa_user_concepts', JSON.stringify(savedConcepts));
+
+      // 2. 更新 React 當前顯示 State
+      setLocalData(prev => ({
+        ...prev,
+        concepts: [...prev.concepts, newObj]
+      }));
     }
+
+    // 3. 嘗試寫入本地硬碟 (僅在 npm run dev 本地開發伺服器下有作用)
+    try {
+      const writeResponse = await fetch('/api/save-data', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(newObj)
+      });
+      const writeResult = await writeResponse.json();
+
+      if (writeResponse.ok && writeResult.success) {
+        alert('✨ 成功！資料已同步寫入本地的 rapaData.json 檔案！\nGit 將會偵測到檔案修改，請將其推送至 GitHub 來發布更新。');
+      } else {
+        alert('💾 成功！資料已安全保存於您瀏覽器的本機快取 (LocalStorage) 中，網頁已即時更新顯示！\n\n提示：因為 Cloudflare Pages 雲端為唯讀環境，若要將此更新永久同步到 GitHub 代碼庫中，請於本地執行開發伺服器新增，並執行 git push。');
+      }
+    } catch (e) {
+      // 雲端或 Wrangler Pages Dev 模式下沒有 save-data API 則會報錯，自動回退使用 LocalStorage
+      alert('💾 成功！資料已安全保存於您瀏覽器的本機快取 (LocalStorage) 中，網頁已即時更新顯示！\n\n提示：因為 Cloudflare Pages 雲端為唯讀環境，若要將此更新永久同步到 GitHub 代碼庫中，請於本地執行開發伺服器新增，並執行 git push。');
+    }
+
+    // 清空表單
+    if (activeFormTab === 'video') {
+      setFormTitle('');
+      setFormUrl('');
+      setFormDuration('');
+      setFormThumbnail('');
+      setFormSummary('');
+      setFormTags('');
+      setFormNotes('');
+    } else {
+      setFormConceptTitle('');
+      setFormConceptUrl('');
+      setFormConceptDescription('');
+    }
+
+    setIsParsing(false);
   };
 
   return (
@@ -368,7 +444,7 @@ function App() {
                   <Video size={24} />
                 </div>
                 <div>
-                  <div className="stat-number">{rapaData.videos.length}</div>
+                  <div className="stat-number">{localData.videos.length}</div>
                   <div className="stat-label">已收錄教學影音</div>
                 </div>
               </div>
@@ -378,7 +454,7 @@ function App() {
                   <Award size={24} />
                 </div>
                 <div>
-                  <div className="stat-number">{rapaData.concepts.length}</div>
+                  <div className="stat-number">{localData.concepts.length}</div>
                   <div className="stat-label">核心觀念解析</div>
                 </div>
               </div>
@@ -403,7 +479,7 @@ function App() {
                   精選/推薦學習影音
                 </h2>
                 <div className="recent-videos-list">
-                  {rapaData.videos.map(video => (
+                  {localData.videos.map(video => (
                     <div 
                       key={video.id} 
                       className="recent-video-item glass-panel"
@@ -706,7 +782,7 @@ function App() {
             </div>
 
             <div className="concepts-grid">
-              {rapaData.concepts.map(concept => (
+              {localData.concepts.map(concept => (
                 <div key={concept.id} className="concept-card glass-panel">
                   <div className="concept-header">
                     <Award className="concept-icon" size={28} />
@@ -758,7 +834,7 @@ function App() {
               <button 
                 type="button"
                 className={`filter-btn ${activeFormTab === 'video' ? 'active' : ''}`}
-                onClick={() => { setActiveFormTab('video'); setGeneratedData(''); setParseError(''); }}
+                onClick={() => { setActiveFormTab('video'); setParseError(''); }}
                 style={{ flex: 1, maxWidth: '200px' }}
               >
                 🎬 新增影音/短片
@@ -766,7 +842,7 @@ function App() {
               <button 
                 type="button"
                 className={`filter-btn ${activeFormTab === 'concept' ? 'active' : ''}`}
-                onClick={() => { setActiveFormTab('concept'); setGeneratedData(''); setParseError(''); }}
+                onClick={() => { setActiveFormTab('concept'); setParseError(''); }}
                 style={{ flex: 1, maxWidth: '200px' }}
               >
                 ✍️ 新增文字教學/觀念
@@ -799,7 +875,7 @@ function App() {
               </div>
             )}
 
-            <form onSubmit={handleGenerateData}>
+            <form onSubmit={handleSaveToDatabase}>
               
               {/* VIDEO TAB FORM */}
               {activeFormTab === 'video' && (
@@ -1001,24 +1077,24 @@ function App() {
                 </>
               )}
 
-              <button type="submit" className="form-submit-btn" style={{ width: '100%' }}>
-                產生 JSON 資料
+              <button 
+                type="submit" 
+                className="form-submit-btn" 
+                style={{ 
+                  width: '100%', 
+                  display: 'flex', 
+                  alignItems: 'center', 
+                  justifyContent: 'center', 
+                  gap: '0.5rem',
+                  background: 'linear-gradient(135deg, #10b981 0%, #059669 100%)',
+                  boxShadow: '0 4px 15px rgba(16, 185, 129, 0.25)'
+                }}
+                disabled={isParsing}
+              >
+                <Save size={18} />
+                {isParsing ? '資料寫入中...' : '💾 確認寫入資料庫'}
               </button>
             </form>
-
-            {generatedData && (
-              <div style={{ marginTop: '2rem' }}>
-                <div className="form-label">
-                  {activeFormTab === 'video' 
-                    ? "產生的 JSON 代碼 (可複製至 `rapaData.json` 的 videos 陣列中)："
-                    : "產生的 JSON 代碼 (可複製至 `rapaData.json` 的 concepts 陣列中)："}
-                </div>
-                <pre className="code-output-box">{generatedData}</pre>
-                <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginTop: '0.5rem', textAlign: 'center' }}>
-                  提示：您可以複製上述 JSON，直接貼上到 `src/data/rapaData.json` 對應的陣列中，重新整理網頁即可即時顯示！
-                </p>
-              </div>
-            )}
           </div>
         )}
 
