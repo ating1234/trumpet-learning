@@ -684,6 +684,139 @@ function App() {
     setIsParsing(false);
   };
 
+  // AI Article Import Logic (Split multi-concept, check duplicates, write to DB)
+  const handleArticleAiImport = async (e) => {
+    e.preventDefault();
+    if (!formConceptArticleText.trim()) {
+      setParseError('請先貼上文章內容');
+      return;
+    }
+
+    setParseError('');
+    setIsParsing(true);
+
+    try {
+      const apiResponse = await fetch('/api/parse', {
+        method: 'POST',
+        headers: getHeaders(),
+        body: JSON.stringify({ content: formConceptArticleText.trim() })
+      });
+      
+      const apiResult = await apiResponse.json();
+      
+      if (apiResponse.ok && apiResult.success && apiResult.data) {
+        const llmData = apiResult.data;
+        
+        if (llmData.concepts && Array.isArray(llmData.concepts)) {
+          const parsedConcepts = llmData.concepts;
+          if (parsedConcepts.length === 0) {
+            alert("❌ AI 未能從文章中提煉出 any 核心小號觀念，請確保文章內容包含相關技巧。");
+            setIsParsing(false);
+            return;
+          }
+
+          const duplicateTitles = [];
+          const nonDuplicateConcepts = [];
+
+          parsedConcepts.forEach(c => {
+            const titleExistsInConcepts = localData.concepts.some(existing => 
+              existing.title.trim().toLowerCase() === c.title.trim().toLowerCase()
+            );
+            const titleExistsInVideos = localData.videos.some(existing => 
+              existing.title.trim().toLowerCase() === c.title.trim().toLowerCase()
+            );
+
+            if (titleExistsInConcepts || titleExistsInVideos) {
+              duplicateTitles.push(c.title);
+            } else {
+              nonDuplicateConcepts.push(c);
+            }
+          });
+
+          if (nonDuplicateConcepts.length === 0) {
+            alert(`⚠️ AI 提煉出的所有主題皆已存在於知識庫中，無須重複匯入：\n${duplicateTitles.map(t => ` - 《${t}》`).join('\n')}`);
+            setIsParsing(false);
+            return;
+          }
+
+          if (duplicateTitles.length > 0) {
+            const confirmImport = window.confirm(
+              `⚠️ 檢測到部分教學主題已重複！\n\n` +
+              `已存在且將被跳過的項目：\n${duplicateTitles.map(t => ` - 《${t}》`).join('\n')}\n\n` +
+              `準備匯入的新項目：\n${nonDuplicateConcepts.map(c => ` - 《${c.title}》`).join('\n')}\n\n` +
+              `是否確認只匯入這 ${nonDuplicateConcepts.length} 個不重複的主題？`
+            );
+            if (!confirmImport) {
+              setIsParsing(false);
+              return;
+            }
+          }
+
+          let importCount = 0;
+          const savedConcepts = JSON.parse(localStorage.getItem('rapa_user_concepts') || '[]');
+
+          for (const c of nonDuplicateConcepts) {
+            const randomId = "concept-" + Math.floor(Math.random() * 1000);
+            const newConceptObj = {
+              id: randomId,
+              title: c.title,
+              url: formConceptUrl || undefined,
+              description: c.description + (c.tags && c.tags.length > 0 ? `\n\n【主題標籤】: ${c.tags.join(', ')}` : '')
+            };
+
+            savedConcepts.push(newConceptObj);
+            
+            try {
+              await fetch('/api/concepts', {
+                method: 'POST',
+                headers: getHeaders(),
+                body: JSON.stringify(newConceptObj)
+              });
+            } catch (e) {
+              console.warn('雲端 D1 寫入失敗，使用本地快取。', e);
+            }
+
+            try {
+              await fetch('/api/save-data', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(newConceptObj)
+              });
+            } catch (e) {}
+
+            localData.concepts.push(newConceptObj);
+            importCount++;
+          }
+
+          localStorage.setItem('rapa_user_concepts', JSON.stringify(savedConcepts));
+          
+          setLocalData({
+            videos: [...localData.videos],
+            concepts: [...localData.concepts]
+          });
+
+          alert(`✨ 成功！AI 智能分析已將文章自動拆分為以下 ${importCount} 個核心主題並匯入知識庫中：\n` +
+            nonDuplicateConcepts.map(c => ` - 《${c.title}》`).join('\n')
+          );
+
+          setFormConceptTitle('');
+          setFormConceptUrl('');
+          setFormConceptDescription('');
+          setFormConceptArticleText('');
+        } else {
+          alert('❌ AI 解析格式不正確，未能取得主題列表。');
+        }
+      } else {
+        alert(`❌ AI 解析文章失敗：${apiResult.message || '未知錯誤'}`);
+      }
+    } catch (err) {
+      console.error('解析匯入失敗', err);
+      setParseError('文章解析與匯入失敗，請確認 API 金鑰是否設定或網路連線。');
+    } finally {
+      setIsParsing(false);
+    }
+  };
+
   // UNVERIFIED SCREEN RENDERING (Rich Aesthetics password lock screen)
   if (!isAuthenticated) {
     return (
@@ -1382,7 +1515,7 @@ function App() {
                 type="button"
                 className={`filter-btn ${activeFormTab === 'video' ? 'active' : ''}`}
                 onClick={() => { setActiveFormTab('video'); setParseError(''); }}
-                style={{ flex: 1, maxWidth: '200px' }}
+                style={{ flex: 1, maxWidth: '180px' }}
               >
                 🎬 新增影音/短片
               </button>
@@ -1390,16 +1523,26 @@ function App() {
                 type="button"
                 className={`filter-btn ${activeFormTab === 'concept' ? 'active' : ''}`}
                 onClick={() => { setActiveFormTab('concept'); setParseError(''); }}
-                style={{ flex: 1, maxWidth: '200px' }}
+                style={{ flex: 1, maxWidth: '180px' }}
               >
-                ✍️ 新增文字教學/觀念
+                ✍️ 手動新增觀念
+              </button>
+              <button 
+                type="button"
+                className={`filter-btn ${activeFormTab === 'article' ? 'active' : ''}`}
+                onClick={() => { setActiveFormTab('article'); setParseError(''); }}
+                style={{ flex: 1, maxWidth: '180px' }}
+              >
+                📝 貼上文章 AI 匯入
               </button>
             </div>
 
             <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem', marginBottom: '1.5rem', textAlign: 'center' }}>
               {activeFormTab === 'video' 
                 ? "貼上影片連結，系統會自動在 Cloudflare 後端執行 LLM 深度分析，自動生成標題、標籤、摘要與筆記！"
-                : "填寫教學文章或筆記連結，後端 LLM 將自動提煉出核心教學主題與文章精華觀念！"}
+                : activeFormTab === 'concept'
+                  ? "手動輸入標題與詳細描述，儲存前可貼上文章網址點擊 AI 解析自動填入！"
+                  : "直接貼上整篇文章，AI 會自動拆分為多個主題、排除重複並一鍵匯入資料庫，無需手動填寫標題！"}
             </p>
 
             {/* Notification / Error / Warning Box */}
@@ -1422,238 +1565,291 @@ function App() {
               </div>
             )}
 
-            <form onSubmit={handleSaveToDatabase}>
-              
-              {/* VIDEO TAB FORM */}
-              {activeFormTab === 'video' && (
-                <>
-                  <div className="form-group">
-                    <label className="form-label">影片連結 (URL) - 貼上後可點擊右側自動解析</label>
-                    <div style={{ display: 'flex', gap: '0.75rem' }}>
-                      <input 
-                        type="url" 
-                        className="form-input" 
-                        placeholder="https://www.youtube.com/watch?v=... 或 https://www.youtube.com/shorts/..." 
-                        required
-                        value={formUrl}
-                        onChange={(e) => setFormUrl(e.target.value)}
-                        style={{ flex: 1 }}
-                      />
-                      <button
-                        type="button"
-                        className="form-submit-btn"
-                        style={{ 
-                          width: 'auto', 
-                          padding: '0 1.25rem', 
-                          background: 'linear-gradient(135deg, var(--primary) 0%, #0099ff 100%)', 
-                          display: 'flex', 
-                          alignItems: 'center', 
-                          gap: '0.25rem',
-                          whiteSpace: 'nowrap'
-                        }}
-                        onClick={handleUrlAutoParse}
-                        disabled={isParsing}
-                      >
-                        {isParsing ? <Loader2 size={16} className="animate-spin" /> : <Sparkles size={16} />}
-                        {isParsing ? 'LLM 分析中...' : '⚡ AI 智能解析'}
-                      </button>
-                    </div>
-                  </div>
-
-                  <div className="form-group">
-                    <label className="form-label">教學標題</label>
+            {/* VIDEO TAB FORM */}
+            {activeFormTab === 'video' && (
+              <form onSubmit={handleSaveToDatabase}>
+                <div className="form-group">
+                  <label className="form-label">影片連結 (URL) - 貼上後可點擊右側自動解析</label>
+                  <div style={{ display: 'flex', gap: '0.75rem' }}>
                     <input 
-                      type="text" 
+                      type="url" 
                       className="form-input" 
-                      placeholder="例如: 8. FISH FACE! (How to Build a Stronger Embouchure)" 
+                      placeholder="https://www.youtube.com/watch?v=... 或 https://www.youtube.com/shorts/..." 
                       required
-                      value={formTitle}
-                      onChange={(e) => setFormTitle(e.target.value)}
+                      value={formUrl}
+                      onChange={(e) => setFormUrl(e.target.value)}
+                      style={{ flex: 1 }}
                     />
+                    <button
+                      type="button"
+                      className="form-submit-btn"
+                      style={{ 
+                        width: 'auto', 
+                        padding: '0 1.25rem', 
+                        background: 'linear-gradient(135deg, var(--primary) 0%, #0099ff 100%)', 
+                        display: 'flex', 
+                        alignItems: 'center', 
+                        gap: '0.25rem',
+                        whiteSpace: 'nowrap'
+                      }}
+                      onClick={handleUrlAutoParse}
+                      disabled={isParsing}
+                    >
+                      {isParsing ? <Loader2 size={16} className="animate-spin" /> : <Sparkles size={16} />}
+                      {isParsing ? 'LLM 分析中...' : '⚡ AI 智能解析'}
+                    </button>
                   </div>
+                </div>
 
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
-                    <div className="form-group">
-                      <label className="form-label">影音分類</label>
-                      <select 
-                        className="form-select"
-                        value={formType}
-                        onChange={(e) => setFormType(e.target.value)}
-                      >
-                        <option value="video">長影音 (Video)</option>
-                        <option value="shorts">YouTube Shorts</option>
-                        <option value="tiktok">TikTok</option>
-                      </select>
-                    </div>
+                <div className="form-group">
+                  <label className="form-label">教學標題</label>
+                  <input 
+                    type="text" 
+                    className="form-input" 
+                    placeholder="例如: 8. FISH FACE! (How to Build a Stronger Embouchure)" 
+                    required
+                    value={formTitle}
+                    onChange={(e) => setFormTitle(e.target.value)}
+                  />
+                </div>
 
-                    <div className="form-group">
-                      <label className="form-label">平台</label>
-                      <select 
-                        className="form-select"
-                        value={formPlatform}
-                        onChange={(e) => setFormPlatform(e.target.value)}
-                      >
-                        <option value="YouTube">YouTube</option>
-                        <option value="TikTok">TikTok</option>
-                        <option value="Facebook">Facebook</option>
-                        <option value="Website">其他網頁</option>
-                      </select>
-                    </div>
-                  </div>
-
-                  <div style={{ display: 'grid', gridTemplateColumns: '1.5fr 1fr', gap: '1rem' }}>
-                    <div className="form-group">
-                      <label className="form-label">影片縮圖網址 (自動解析可帶入)</label>
-                      <input 
-                        type="text" 
-                        className="form-input" 
-                        placeholder="https://img.youtube.com/vi/..." 
-                        value={formThumbnail}
-                        onChange={(e) => setFormThumbnail(e.target.value)}
-                      />
-                    </div>
-
-                    <div className="form-group">
-                      <label className="form-label">時長 (MM:SS)</label>
-                      <input 
-                        type="text" 
-                        className="form-input" 
-                        placeholder="12:45" 
-                        required
-                        value={formDuration}
-                        onChange={(e) => setFormDuration(e.target.value)}
-                      />
-                    </div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
+                  <div className="form-group">
+                    <label className="form-label">影音分類</label>
+                    <select 
+                      className="form-select"
+                      value={formType}
+                      onChange={(e) => setFormType(e.target.value)}
+                    >
+                      <option value="video">長影音 (Video)</option>
+                      <option value="shorts">YouTube Shorts</option>
+                      <option value="tiktok">TikTok</option>
+                    </select>
                   </div>
 
                   <div className="form-group">
-                    <label className="form-label">主題標籤 (以英文逗號分隔)</label>
+                    <label className="form-label">平台</label>
+                    <select 
+                      className="form-select"
+                      value={formPlatform}
+                      onChange={(e) => setFormPlatform(e.target.value)}
+                    >
+                      <option value="YouTube">YouTube</option>
+                      <option value="TikTok">TikTok</option>
+                      <option value="Facebook">Facebook</option>
+                      <option value="Website">其他網頁</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div style={{ display: 'grid', gridTemplateColumns: '1.5fr 1fr', gap: '1rem' }}>
+                  <div className="form-group">
+                    <label className="form-label">影片縮圖網址 (自動解析可帶入)</label>
                     <input 
                       type="text" 
                       className="form-input" 
-                      placeholder="Embouchure, High Range, Airflow" 
-                      value={formTags}
-                      onChange={(e) => setFormTags(e.target.value)}
+                      placeholder="https://img.youtube.com/vi/..." 
+                      value={formThumbnail}
+                      onChange={(e) => setFormThumbnail(e.target.value)}
                     />
                   </div>
 
                   <div className="form-group">
-                    <label className="form-label">教學核心摘要</label>
-                    <textarea 
-                      className="form-textarea" 
-                      rows="3" 
-                      placeholder="簡單敘述這支影片的重要教學重點與物理心法..."
-                      value={formSummary}
-                      onChange={(e) => setFormSummary(e.target.value)}
-                    ></textarea>
-                  </div>
-
-                  <div className="form-group">
-                    <label className="form-label">
-                      時間點筆記列表 (每行一筆，格式：`時間|大綱標題|詳細筆記內容`)
-                    </label>
-                    <textarea 
-                      className="form-textarea" 
-                      rows="5" 
-                      placeholder="01:20|呼吸放鬆練習|說明如何放鬆肩膀&#13;04:35|Wedge的氣壓感受|說明氣壓如何在腹部建立"
-                      value={formNotes}
-                      onChange={(e) => setFormNotes(e.target.value)}
-                    ></textarea>
-                  </div>
-                </>
-              )}
-
-              {/* CONCEPT/ARTICLE TAB FORM */}
-              {activeFormTab === 'concept' && (
-                <>
-                  <div className="form-group">
-                    <label className="form-label">參考文章網址 (URL) - 選填</label>
-                    <div style={{ display: 'flex', gap: '0.75rem' }}>
-                      <input 
-                        type="url" 
-                        className="form-input" 
-                        placeholder="https://www.adamrapa.com/... 或臉書教學連結" 
-                        value={formConceptUrl}
-                        onChange={(e) => setFormConceptUrl(e.target.value)}
-                        style={{ flex: 1 }}
-                      />
-                      <button
-                        type="button"
-                        className="form-submit-btn"
-                        style={{ 
-                          width: 'auto', 
-                          padding: '0 1.25rem', 
-                          background: 'linear-gradient(135deg, var(--primary) 0%, #0099ff 100%)', 
-                          display: 'flex', 
-                          alignItems: 'center', 
-                          gap: '0.25rem',
-                          whiteSpace: 'nowrap'
-                        }}
-                        onClick={handleUrlAutoParse}
-                        disabled={isParsing}
-                      >
-                        {isParsing ? <Loader2 size={16} className="animate-spin" /> : <Sparkles size={16} />}
-                        {isParsing ? 'LLM 分析中...' : (formConceptArticleText.trim() !== '' ? '⚡ AI 解析文章' : (formConceptUrl ? '⚡ AI 解析網址' : '⚡ AI 智能解析'))}
-                      </button>
-                    </div>
-                  </div>
-
-                  <div className="form-group">
-                    <label className="form-label">貼上文章內容進行 AI 智能解析 (選填)</label>
-                    <textarea 
-                      className="form-textarea" 
-                      rows="6" 
-                      placeholder="如果您有大師班筆記、PDF 文章段落或是社群貼文，可以直接貼在這裡，然後點擊上方的『⚡ AI 解析文章』，AI 會自動為您提煉標題與精華內容！"
-                      value={formConceptArticleText}
-                      onChange={(e) => setFormConceptArticleText(e.target.value)}
-                      style={{ background: 'rgba(10, 14, 28, 0.8)', borderColor: 'rgba(0, 240, 255, 0.1)' }}
-                    ></textarea>
-                  </div>
-
-                  <div className="form-group">
-                    <label className="form-label">教學主題/核心觀念標題</label>
+                    <label className="form-label">時長 (MM:SS)</label>
                     <input 
                       type="text" 
                       className="form-input" 
-                      placeholder="例如: Wedge Technique (楔形呼吸法)" 
+                      placeholder="12:45" 
                       required
-                      value={formConceptTitle}
-                      onChange={(e) => setFormConceptTitle(e.target.value)}
+                      value={formDuration}
+                      onChange={(e) => setFormDuration(e.target.value)}
                     />
                   </div>
+                </div>
 
-                  <div className="form-group">
-                    <label className="form-label">觀念詳細描述 / 教學文字文章精華</label>
-                    <textarea 
-                      className="form-textarea" 
-                      rows="8" 
-                      placeholder="在此貼上大師班的文字精華內容、部落格文章重點或自主學習筆記。段落之間可用兩個換行區分..."
-                      required
-                      value={formConceptDescription}
-                      onChange={(e) => setFormConceptDescription(e.target.value)}
-                    ></textarea>
+                <div className="form-group">
+                  <label className="form-label">主題標籤 (以英文逗號分隔)</label>
+                  <input 
+                    type="text" 
+                    className="form-input" 
+                    placeholder="Embouchure, High Range, Airflow" 
+                    value={formTags}
+                    onChange={(e) => setFormTags(e.target.value)}
+                  />
+                </div>
+
+                <div className="form-group">
+                  <label className="form-label">教學核心摘要</label>
+                  <textarea 
+                    className="form-textarea" 
+                    rows="3" 
+                    placeholder="簡單敘述這支影片的重要教學重點與物理心法..."
+                    value={formSummary}
+                    onChange={(e) => setFormSummary(e.target.value)}
+                  ></textarea>
+                </div>
+
+                <div className="form-group">
+                  <label className="form-label">
+                    時間點筆記列表 (每行一筆，格式：`時間|大綱標題|詳細筆記內容`)
+                  </label>
+                  <textarea 
+                    className="form-textarea" 
+                    rows="5" 
+                    placeholder="01:20|呼吸放鬆練習|說明如何放鬆肩膀&#13;04:35|Wedge的氣壓感受|說明氣壓如何在腹部建立"
+                    value={formNotes}
+                    onChange={(e) => setFormNotes(e.target.value)}
+                  ></textarea>
+                </div>
+
+                <button 
+                  type="submit" 
+                  className="form-submit-btn" 
+                  style={{ 
+                    width: '100%', 
+                    display: 'flex', 
+                    alignItems: 'center', 
+                    justifyContent: 'center', 
+                    gap: '0.5rem',
+                    background: 'linear-gradient(135deg, #10b981 0%, #059669 100%)',
+                    boxShadow: '0 4px 15px rgba(16, 185, 129, 0.25)',
+                    marginTop: '1.5rem'
+                  }}
+                  disabled={isParsing}
+                >
+                  <Save size={18} />
+                  {isParsing ? '資料寫入中...' : '💾 確認寫入資料庫'}
+                </button>
+              </form>
+            )}
+
+            {/* CONCEPT TAB FORM */}
+            {activeFormTab === 'concept' && (
+              <form onSubmit={handleSaveToDatabase}>
+                <div className="form-group">
+                  <label className="form-label">參考文章網址 (URL) - 選填</label>
+                  <div style={{ display: 'flex', gap: '0.75rem' }}>
+                    <input 
+                      type="url" 
+                      className="form-input" 
+                      placeholder="https://www.adamrapa.com/... 或臉書教學連結" 
+                      value={formConceptUrl}
+                      onChange={(e) => setFormConceptUrl(e.target.value)}
+                      style={{ flex: 1 }}
+                    />
+                    <button
+                      type="button"
+                      className="form-submit-btn"
+                      style={{ 
+                        width: 'auto', 
+                        padding: '0 1.25rem', 
+                        background: 'linear-gradient(135deg, var(--primary) 0%, #0099ff 100%)', 
+                        display: 'flex', 
+                        alignItems: 'center', 
+                        gap: '0.25rem',
+                        whiteSpace: 'nowrap'
+                      }}
+                      onClick={handleUrlAutoParse}
+                      disabled={isParsing}
+                    >
+                      {isParsing ? <Loader2 size={16} className="animate-spin" /> : <Sparkles size={16} />}
+                      {isParsing ? 'LLM 分析中...' : (formConceptUrl ? '⚡ AI 解析網址' : '⚡ AI 智能解析')}
+                    </button>
                   </div>
-                </>
-              )}
+                </div>
 
-              <button 
-                type="submit" 
-                className="form-submit-btn" 
-                style={{ 
-                  width: '100%', 
-                  display: 'flex', 
-                  alignItems: 'center', 
-                  justifyContent: 'center', 
-                  gap: '0.5rem',
-                  background: 'linear-gradient(135deg, #10b981 0%, #059669 100%)',
-                  boxShadow: '0 4px 15px rgba(16, 185, 129, 0.25)'
-                }}
-                disabled={isParsing}
-              >
-                <Save size={18} />
-                {isParsing ? '資料寫入中...' : '💾 確認寫入資料庫'}
-              </button>
-            </form>
+                <div className="form-group">
+                  <label className="form-label">教學主題/核心觀念標題</label>
+                  <input 
+                    type="text" 
+                    className="form-input" 
+                    placeholder="例如: Wedge Technique (楔形呼吸法)" 
+                    required
+                    value={formConceptTitle}
+                    onChange={(e) => setFormConceptTitle(e.target.value)}
+                  />
+                </div>
+
+                <div className="form-group">
+                  <label className="form-label">觀念詳細描述 / 教學文字文章精華</label>
+                  <textarea 
+                    className="form-textarea" 
+                    rows="8" 
+                    placeholder="在此貼上大師班的文字精華內容、部落格文章重點或自主學習筆記。段落之間可用兩個換行區分..."
+                    required
+                    value={formConceptDescription}
+                    onChange={(e) => setFormConceptDescription(e.target.value)}
+                  ></textarea>
+                </div>
+
+                <button 
+                  type="submit" 
+                  className="form-submit-btn" 
+                  style={{ 
+                    width: '100%', 
+                    display: 'flex', 
+                    alignItems: 'center', 
+                    justifyContent: 'center', 
+                    gap: '0.5rem',
+                    background: 'linear-gradient(135deg, #10b981 0%, #059669 100%)',
+                    boxShadow: '0 4px 15px rgba(16, 185, 129, 0.25)',
+                    marginTop: '1.5rem'
+                  }}
+                  disabled={isParsing}
+                >
+                  <Save size={18} />
+                  {isParsing ? '資料寫入中...' : '💾 確認寫入資料庫'}
+                </button>
+              </form>
+            )}
+
+            {/* ARTICLE TAB FORM */}
+            {activeFormTab === 'article' && (
+              <form onSubmit={handleArticleAiImport}>
+                <div className="form-group">
+                  <label className="form-label">參考文章網址 (URL) - 選填</label>
+                  <input 
+                    type="url" 
+                    className="form-input" 
+                    placeholder="https://www.adamrapa.com/... 或臉書教學連結" 
+                    value={formConceptUrl}
+                    onChange={(e) => setFormConceptUrl(e.target.value)}
+                  />
+                </div>
+
+                <div className="form-group">
+                  <label className="form-label">貼上文章內容（必填） - 系統會自動拆分出不同的小號主題並寫入</label>
+                  <textarea 
+                    className="form-textarea" 
+                    rows="10" 
+                    placeholder="在此貼上整篇文章或學習筆記內容。AI 將會自動識別並拆分為不同的觀念主題，排重檢查後直接一鍵寫入資料庫！"
+                    required
+                    value={formConceptArticleText}
+                    onChange={(e) => setFormConceptArticleText(e.target.value)}
+                    style={{ background: 'rgba(10, 14, 28, 0.8)', borderColor: 'rgba(0, 240, 255, 0.15)' }}
+                  ></textarea>
+                </div>
+
+                <button 
+                  type="submit" 
+                  className="form-submit-btn" 
+                  style={{ 
+                    width: '100%', 
+                    display: 'flex', 
+                    alignItems: 'center', 
+                    justifyContent: 'center', 
+                    gap: '0.5rem',
+                    background: 'linear-gradient(135deg, #10b981 0%, #059669 100%)',
+                    boxShadow: '0 4px 15px rgba(16, 185, 129, 0.25)',
+                    marginTop: '1.5rem'
+                  }}
+                  disabled={isParsing}
+                >
+                  {isParsing ? <Loader2 size={18} className="animate-spin" /> : <Sparkles size={18} />}
+                  {isParsing ? 'AI 主題拆分與匯入中...' : '⚡ AI 智能拆分並匯入資料庫'}
+                </button>
+              </form>
+            )}
           </div>
         )}
 
