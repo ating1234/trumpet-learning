@@ -58,6 +58,7 @@ function App() {
   const [formConceptTitle, setFormConceptTitle] = useState('');
   const [formConceptUrl, setFormConceptUrl] = useState('');
   const [formConceptDescription, setFormConceptDescription] = useState('');
+  const [formConceptArticleText, setFormConceptArticleText] = useState('');
 
   // Q&A AI states
   const [userQuestion, setUserQuestion] = useState('');
@@ -370,9 +371,10 @@ function App() {
   // URL Auto-Parse Logic (Cloudflare Pages Function + Fallback noembed)
   const handleUrlAutoParse = async () => {
     const targetUrl = activeFormTab === 'video' ? formUrl : formConceptUrl;
+    const isArticleTextParse = activeFormTab === 'concept' && formConceptArticleText.trim() !== '';
     
-    if (!targetUrl) {
-      setParseError('請先輸入網址');
+    if (!targetUrl && !isArticleTextParse) {
+      setParseError(activeFormTab === 'video' ? '請先輸入影片網址' : '請先輸入參考網址，或在下方貼上文章內容');
       return;
     }
     
@@ -380,17 +382,28 @@ function App() {
     setIsParsing(true);
 
     try {
-      const apiResponse = await fetch(`/api/parse?url=${encodeURIComponent(targetUrl)}`, {
-        headers: getHeaders()
-      });
+      let apiResponse;
+      if (isArticleTextParse) {
+        apiResponse = await fetch('/api/parse', {
+          method: 'POST',
+          headers: getHeaders(),
+          body: JSON.stringify({ content: formConceptArticleText.trim() })
+        });
+      } else {
+        apiResponse = await fetch(`/api/parse?url=${encodeURIComponent(targetUrl)}`, {
+          headers: getHeaders()
+        });
+      }
+      
       const apiResult = await apiResponse.json();
       
       if (apiResponse.ok && apiResult.success && apiResult.data) {
         const llmData = apiResult.data;
-        const ytMatch = targetUrl.match(/(?:youtube\.com\/(?:[^\/]+\/.+\/|(?:v|e(?:mbed)?)\/|.*[?&]v=)|youtu\.be\/|shorts\/)([^"&?\/\s]{11})/);
-        const vid = ytMatch ? ytMatch[1] : '';
         
         if (activeFormTab === 'video') {
+          const ytMatch = targetUrl.match(/(?:youtube\.com\/(?:[^\/]+\/.+\/|(?:v|e(?:mbed)?)\/|.*[?&]v=)|youtu\.be\/|shorts\/)([^"&?\/\s]{11})/);
+          const vid = ytMatch ? ytMatch[1] : '';
+          
           if (llmData.title) setFormTitle(llmData.title);
           if (llmData.summary) setFormSummary(llmData.summary);
           if (llmData.tags && Array.isArray(llmData.tags)) setFormTags(llmData.tags.join(', '));
@@ -442,6 +455,10 @@ function App() {
         console.warn('Cloudflare API 調用出錯，將自動回退至基礎解析服務。錯誤原因：', apiResult.error || 'Connection Failed');
       }
       
+      if (isArticleTextParse) {
+        throw new Error(apiResult.message || 'LLM 解析文章失敗，可能未設定 API 金鑰。');
+      }
+      
       const ytMatch = targetUrl.match(/(?:youtube\.com\/(?:[^\/]+\/.+\/|(?:v|e(?:mbed)?)\/|.*[?&]v=)|youtu\.be\/|shorts\/)([^"&?\/\s]{11})/);
       
       if (ytMatch) {
@@ -478,8 +495,8 @@ function App() {
         }
       }
     } catch (err) {
-      console.error('解析網址失敗', err);
-      setParseError('網址解析失敗，請手動輸入資訊。');
+      console.error('解析失敗', err);
+      setParseError(isArticleTextParse ? '文章解析失敗，請確認 API 金鑰是否設定或手動填入內容。' : '網址解析失敗，請手動輸入資訊。');
     } finally {
       setIsParsing(false);
     }
@@ -493,6 +510,22 @@ function App() {
     let newObj = null;
 
     if (activeFormTab === 'video') {
+      // 檢查影片標題或 URL 是否重複
+      const titleExistsInVideos = localData.videos.some(v => 
+        v.title.trim().toLowerCase() === formTitle.trim().toLowerCase()
+      );
+      const urlExists = formUrl.trim() !== '' && localData.videos.some(v => 
+        v.url.trim().toLowerCase() === formUrl.trim().toLowerCase()
+      );
+      
+      if (titleExistsInVideos || urlExists) {
+        const confirmSave = window.confirm(`⚠️ 檢測到相同的影片標題或連結已存在於資料庫中。\n\n您確定要重複匯入嗎？`);
+        if (!confirmSave) {
+          setIsParsing(false);
+          return;
+        }
+      }
+
       const tagsArr = formTags.split(',').map(t => t.trim()).filter(t => t !== '');
       
       const notesArr = formNotes.split('\n').map((line) => {
@@ -555,6 +588,22 @@ function App() {
       }));
 
     } else {
+      // 檢查概念標題是否重複
+      const titleExistsInConcepts = localData.concepts.some(c => 
+        c.title.trim().toLowerCase() === formConceptTitle.trim().toLowerCase()
+      );
+      const titleExistsInVideos = localData.videos.some(v => 
+        v.title.trim().toLowerCase() === formConceptTitle.trim().toLowerCase()
+      );
+      
+      if (titleExistsInConcepts || titleExistsInVideos) {
+        const confirmSave = window.confirm(`⚠️ 檢測到相同的教學觀念或影片標題《${formConceptTitle}》已存在於資料庫中。\n\n您確定要重複匯入嗎？`);
+        if (!confirmSave) {
+          setIsParsing(false);
+          return;
+        }
+      }
+
       const randomId = "concept-" + Math.floor(Math.random() * 1000);
       newObj = {
         id: randomId,
@@ -626,6 +675,7 @@ function App() {
       setFormConceptTitle('');
       setFormConceptUrl('');
       setFormConceptDescription('');
+      setFormConceptArticleText('');
     }
 
     setIsParsing(false);
@@ -1514,7 +1564,7 @@ function App() {
               {activeFormTab === 'concept' && (
                 <>
                   <div className="form-group">
-                    <label className="form-label">參考文章網址 (URL) - 選填，貼上後可點擊右側自動解析標題</label>
+                    <label className="form-label">參考文章網址 (URL) - 選填</label>
                     <div style={{ display: 'flex', gap: '0.75rem' }}>
                       <input 
                         type="url" 
@@ -1540,9 +1590,21 @@ function App() {
                         disabled={isParsing}
                       >
                         {isParsing ? <Loader2 size={16} className="animate-spin" /> : <Sparkles size={16} />}
-                        {isParsing ? 'LLM 分析中...' : '⚡ AI 智能解析'}
+                        {isParsing ? 'LLM 分析中...' : (formConceptArticleText.trim() !== '' ? '⚡ AI 解析文章' : (formConceptUrl ? '⚡ AI 解析網址' : '⚡ AI 智能解析'))}
                       </button>
                     </div>
+                  </div>
+
+                  <div className="form-group">
+                    <label className="form-label">貼上文章內容進行 AI 智能解析 (選填)</label>
+                    <textarea 
+                      className="form-textarea" 
+                      rows="6" 
+                      placeholder="如果您有大師班筆記、PDF 文章段落或是社群貼文，可以直接貼在這裡，然後點擊上方的『⚡ AI 解析文章』，AI 會自動為您提煉標題與精華內容！"
+                      value={formConceptArticleText}
+                      onChange={(e) => setFormConceptArticleText(e.target.value)}
+                      style={{ background: 'rgba(10, 14, 28, 0.8)', borderColor: 'rgba(0, 240, 255, 0.1)' }}
+                    ></textarea>
                   </div>
 
                   <div className="form-group">
