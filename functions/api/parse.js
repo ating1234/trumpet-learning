@@ -46,15 +46,14 @@ async function doParse(context, url, content) {
   let userPrompt = '';
 
   if (content) {
-    systemPrompt = `你是一個專業的小號教學知識整理小助手。請分析以下貼上的小號教學文章或筆記內容，並自動判斷其中包含的「不同核心主題」。
-請將這篇文章「拆分」為一或多個獨立的核心教學觀念，並「嚴格且僅」輸出一個符合以下結構的 JSON 對象，不要包含任何 markdown 標記（如 \`\`\`json 或是 \`\`\`）：
+    systemPrompt = `你是一個專業的小號教學知識整理小助手。請分析以下貼上的小號教學文章或筆記內容，提煉出該教學的結構化 JSON 數據。
+請「嚴格且僅」輸出一個符合以下結構的 JSON 對象，不要包含任何 markdown 標記（如 \`\`\`json 或是 \`\`\`）：
 {
-  "concepts": [
-    {
-      "title": "為該主題提煉出的精確繁體中文標題",
-      "description": "該主題的詳細觀念說明，應整合文章中與此主題相關的精華內容，並使用繁體中文",
-      "tags": ["小號技巧相關標籤"]
-    }
+  "title": "為這段教學文章提煉出最適合且精準的繁體中文標題",
+  "tags": ["標籤1", "標籤2"],
+  "summary": "100字左右的繁體中文核心觀念摘要",
+  "notes": [
+    { "time": "章節重點名稱", "content": "該章節/概念的繁體中文詳細要點說明" }
   ]
 }
 請確保 tags 是關於小號技巧的（例如: Embouchure, Airflow, Posture, Wedge, Buzzing, Lip Recovery）。
