@@ -847,37 +847,55 @@ function App() {
 
   // Delete Item Logic (sync with LocalStorage, Local rapaData.json, and Cloudflare D1)
   const handleDeleteItem = async (itemType, itemId, itemTitle) => {
-    const confirmDelete = window.confirm(`⚠️ 確定要刪除《${itemTitle}》嗎？\n此操作會從本地 LocalStorage、rapaData.json 以及雲端 D1 資料庫中刪除，且無法復原。`);
-    if (!confirmDelete) return;
+    const deleteKey = window.prompt(`⚠️ 確定要刪除《${itemTitle}》嗎？\n此操作無法復原。請輸入「刪除金鑰（Delete Key）」以確認此操作：`);
+    if (deleteKey === null) return; // 使用者點選取消
+    if (!deleteKey.trim()) {
+      alert("❌ 必須輸入刪除金鑰才能刪除項目。");
+      return;
+    }
 
     try {
       // 1. 呼叫後端 D1 刪除
       const apiEndpoint = itemType === 'video' ? '/api/videos' : '/api/concepts';
       let d1Success = false;
+      let d1ErrorMsg = '';
       try {
         const res = await fetch(apiEndpoint, {
           method: 'DELETE',
           headers: getHeaders(),
-          body: JSON.stringify({ id: itemId })
+          body: JSON.stringify({ id: itemId, deleteKey: deleteKey.trim() })
         });
         const resData = await res.json();
         d1Success = res.ok && resData.success;
+        if (!d1Success) {
+          d1ErrorMsg = resData.error || '雲端金鑰驗證失敗';
+        }
       } catch (e) {
         console.warn('D1 資料庫刪除失敗，這在本地開發或 D1 未綁定時是正常的：', e);
       }
 
       // 2. 呼叫本地 JSON 檔案刪除 (Vite middleware)
       let localFileSuccess = false;
+      let localErrorMsg = '';
       try {
         const res = await fetch('/api/delete-data', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ id: itemId, type: itemType })
+          body: JSON.stringify({ id: itemId, type: itemType, deleteKey: deleteKey.trim() })
         });
         const resData = await res.json();
         localFileSuccess = res.ok && resData.success;
+        if (!localFileSuccess) {
+          localErrorMsg = resData.error || '本地金鑰驗證失敗';
+        }
       } catch (e) {
         console.warn('本地檔案刪除失敗：', e);
+      }
+
+      // 如果金鑰錯誤被阻攔，則直接報錯不刪除本地快取
+      if ((d1ErrorMsg && d1ErrorMsg.includes('金鑰')) || (localErrorMsg && localErrorMsg.includes('金鑰'))) {
+        alert(`❌ 刪除失敗：${d1ErrorMsg || localErrorMsg}`);
+        return;
       }
 
       // 3. 從 LocalStorage 刪除

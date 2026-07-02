@@ -64,6 +64,13 @@ const localDataSaverPlugin = () => ({
             const fileData = fs.readFileSync(dataPath, 'utf-8');
             const jsonData = JSON.parse(fileData);
             
+            const correctDeleteKey = process.env.DELETE_KEY || 'rapa123';
+            if (!deleteInfo.deleteKey || deleteInfo.deleteKey !== correctDeleteKey) {
+              res.writeHead(403, { 'Content-Type': 'application/json; charset=utf-8' });
+              res.end(JSON.stringify({ success: false, error: '刪除金鑰（Delete Key）錯誤，拒絕執行刪除。' }));
+              return;
+            }
+
             // 過濾掉要刪除的項目
             if (deleteInfo.type === 'video') {
               jsonData.videos = jsonData.videos.filter(v => v.id !== deleteInfo.id);

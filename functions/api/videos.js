@@ -160,11 +160,19 @@ export async function onRequestDelete(context) {
   }
 
   try {
-    const { id } = await context.request.json();
+    const { id, deleteKey } = await context.request.json();
     
     if (!id) {
       return new Response(JSON.stringify({ success: false, error: '缺少必要欄位 id' }), {
         status: 400,
+        headers
+      });
+    }
+
+    const correctDeleteKey = context.env.DELETE_KEY || 'rapa123';
+    if (!deleteKey || deleteKey !== correctDeleteKey) {
+      return new Response(JSON.stringify({ success: false, error: '刪除金鑰（Delete Key）錯誤，拒絕執行刪除。' }), {
+        status: 403,
         headers
       });
     }
