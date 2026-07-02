@@ -142,6 +142,40 @@ function App() {
           videos: Array.from(videoMap.values()),
           concepts: Array.from(conceptMap.values())
         });
+
+        // 背景自動將 LocalStorage 孤兒資料同步到 D1 雲端資料庫
+        const d1VideoIds = new Set(videoResult.data.map(v => v.id));
+        const d1ConceptIds = new Set(conceptResult.data.map(c => c.id));
+        
+        savedVideos.forEach(async (v) => {
+          if (!d1VideoIds.has(v.id)) {
+            try {
+              await fetch('/api/videos', {
+                method: 'POST',
+                headers: getHeaders(),
+                body: JSON.stringify(v)
+              });
+              console.log(`[Auto-Sync] 成功同步影片《${v.title}》至雲端 D1 資料庫`);
+            } catch (err) {
+              console.error(`[Auto-Sync] 同步影片《${v.title}》失敗`, err);
+            }
+          }
+        });
+
+        savedConcepts.forEach(async (c) => {
+          if (!d1ConceptIds.has(c.id)) {
+            try {
+              await fetch('/api/concepts', {
+                method: 'POST',
+                headers: getHeaders(),
+                body: JSON.stringify(c)
+              });
+              console.log(`[Auto-Sync] 成功同步觀念《${c.title}》至雲端 D1 資料庫`);
+            } catch (err) {
+              console.error(`[Auto-Sync] 同步觀念《${c.title}》失敗`, err);
+            }
+          }
+        });
       }
     } catch (e) {
       console.warn('無法連線到 Cloudflare D1。將繼續使用本地快取與預設資料。', e);
