@@ -434,6 +434,107 @@ function App() {
             setFormDuration('0:00');
           }
         } else {
+          if (isArticleTextParse && llmData.concepts && Array.isArray(llmData.concepts)) {
+            const parsedConcepts = llmData.concepts;
+            if (parsedConcepts.length === 0) {
+              alert("❌ AI 未能從文章中提煉出任何核心小號觀念，請確保文章內容包含相關技巧。");
+              setIsParsing(false);
+              return;
+            }
+
+            const duplicateTitles = [];
+            const nonDuplicateConcepts = [];
+
+            parsedConcepts.forEach(c => {
+              const titleExistsInConcepts = localData.concepts.some(existing => 
+                existing.title.trim().toLowerCase() === c.title.trim().toLowerCase()
+              );
+              const titleExistsInVideos = localData.videos.some(existing => 
+                existing.title.trim().toLowerCase() === c.title.trim().toLowerCase()
+              );
+
+              if (titleExistsInConcepts || titleExistsInVideos) {
+                duplicateTitles.push(c.title);
+              } else {
+                nonDuplicateConcepts.push(c);
+              }
+            });
+
+            if (nonDuplicateConcepts.length === 0) {
+              alert(`⚠️ 提煉出的所有主題皆已存在於知識庫中，無須重複匯入：\n${duplicateTitles.map(t => ` - 《${t}》`).join('\n')}`);
+              setIsParsing(false);
+              return;
+            }
+
+            if (duplicateTitles.length > 0) {
+              const confirmImport = window.confirm(
+                `⚠️ 檢測到部分教學主題已重複！\n\n` +
+                `已存在且將被跳過的項目：\n${duplicateTitles.map(t => ` - 《${t}》`).join('\n')}\n\n` +
+                `準備匯入的新項目：\n${nonDuplicateConcepts.map(c => ` - 《${c.title}》`).join('\n')}\n\n` +
+                `是否確認只匯入這 ${nonDuplicateConcepts.length} 個不重複的主題？`
+              );
+              if (!confirmImport) {
+                setIsParsing(false);
+                return;
+              }
+            }
+
+            let importCount = 0;
+            const savedConcepts = JSON.parse(localStorage.getItem('rapa_user_concepts') || '[]');
+
+            for (const c of nonDuplicateConcepts) {
+              const randomId = "concept-" + Math.floor(Math.random() * 1000);
+              const newConceptObj = {
+                id: randomId,
+                title: c.title,
+                url: formConceptUrl || undefined,
+                description: c.description + (c.tags && c.tags.length > 0 ? `\n\n【主題標籤】: ${c.tags.join(', ')}` : '')
+              };
+
+              savedConcepts.push(newConceptObj);
+              
+              try {
+                await fetch('/api/concepts', {
+                  method: 'POST',
+                  headers: getHeaders(),
+                  body: JSON.stringify(newConceptObj)
+                });
+              } catch (e) {
+                console.warn('雲端 D1 寫入失敗，使用本地快取。', e);
+              }
+
+              try {
+                await fetch('/api/save-data', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify(newConceptObj)
+                });
+              } catch (e) {}
+
+              localData.concepts.push(newConceptObj);
+              importCount++;
+            }
+
+            localStorage.setItem('rapa_user_concepts', JSON.stringify(savedConcepts));
+            
+            setLocalData({
+              videos: [...localData.videos],
+              concepts: [...localData.concepts]
+            });
+
+            alert(`✨ 成功！AI 智能分析已將文章自動拆分為以下 ${importCount} 個核心主題並匯入知識庫中：\n` +
+              nonDuplicateConcepts.map(c => ` - 《${c.title}》`).join('\n')
+            );
+
+            setFormConceptTitle('');
+            setFormConceptUrl('');
+            setFormConceptDescription('');
+            setFormConceptArticleText('');
+            
+            setIsParsing(false);
+            return;
+          }
+
           if (llmData.title) setFormConceptTitle(llmData.title);
           
           let desc = llmData.summary || '';
@@ -1613,7 +1714,7 @@ function App() {
                       type="text" 
                       className="form-input" 
                       placeholder="例如: Wedge Technique (楔形呼吸法)" 
-                      required
+                      required={!formConceptArticleText.trim()}
                       value={formConceptTitle}
                       onChange={(e) => setFormConceptTitle(e.target.value)}
                     />
@@ -1625,7 +1726,7 @@ function App() {
                       className="form-textarea" 
                       rows="8" 
                       placeholder="在此貼上大師班的文字精華內容、部落格文章重點或自主學習筆記。段落之間可用兩個換行區分..."
-                      required
+                      required={!formConceptArticleText.trim()}
                       value={formConceptDescription}
                       onChange={(e) => setFormConceptDescription(e.target.value)}
                     ></textarea>

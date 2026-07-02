@@ -42,7 +42,26 @@ async function doParse(context, url, content) {
     }
   }
 
-  const systemPrompt = `你是一個專業的小號教學知識整理小助手。請分析以下網頁影音連結或貼上的文章內容，提煉出該教學的結構化 JSON 數據。
+  let systemPrompt = '';
+  let userPrompt = '';
+
+  if (content) {
+    systemPrompt = `你是一個專業的小號教學知識整理小助手。請分析以下貼上的小號教學文章或筆記內容，並自動判斷其中包含的「不同核心主題」。
+請將這篇文章「拆分」為一或多個獨立的核心教學觀念，並「嚴格且僅」輸出一個符合以下結構的 JSON 對象，不要包含任何 markdown 標記（如 \`\`\`json 或是 \`\`\`）：
+{
+  "concepts": [
+    {
+      "title": "為該主題提煉出的精確繁體中文標題",
+      "description": "該主題的詳細觀念說明，應整合文章中與此主題相關的精華內容，並使用繁體中文",
+      "tags": ["小號技巧相關標籤"]
+    }
+  ]
+}
+請確保 tags 是關於小號技巧的（例如: Embouchure, Airflow, Posture, Wedge, Buzzing, Lip Recovery）。
+所有繁體中文內容請使用 Traditional Chinese。`;
+    userPrompt = `直接貼上的文章內容:\n${content}`;
+  } else {
+    systemPrompt = `你是一個專業的小號教學知識整理小助手。請分析以下網頁影音連結的內容，提煉出該教學的結構化 JSON 數據。
 請「嚴格且僅」輸出一個符合以下結構的 JSON 對象，不要包含任何 markdown 標記（如 \`\`\`json 或是 \`\`\`）：
 {
   "title": "教學影片或文章的精確繁體中文標題",
@@ -55,11 +74,6 @@ async function doParse(context, url, content) {
 請確保 tags 是關於小號技巧的（例如: Embouchure, Airflow, Posture, Wedge, Buzzing, Lip Recovery）。
 如果內容是文字文章而非影片，notes 陣列請保留 2-3 個主要章節重點，並給予虛擬的時間點或章節名稱（例如 00:00 導言，或依據文章分段）。
 所有繁體中文內容請使用 Traditional Chinese。`;
-
-  let userPrompt = '';
-  if (content) {
-    userPrompt = `直接貼上的文章內容:\n${content}`;
-  } else {
     userPrompt = `目標網址: ${url}\n網頁標題: ${title}\n網頁描述/前言: ${descriptionText}`;
   }
 
