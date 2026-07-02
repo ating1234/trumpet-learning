@@ -136,11 +136,55 @@ export async function onRequestPost(context) {
   }
 }
 
+export async function onRequestDelete(context) {
+  const headers = {
+    'Content-Type': 'application/json; charset=utf-8',
+    'Access-Control-Allow-Origin': '*'
+  };
+
+  // 安全攔截
+  if (!authorize(context.request, context.env)) {
+    return new Response(JSON.stringify({ error: 'Unauthorized', message: '認證失敗，請輸入正確密碼。' }), {
+      status: 401,
+      headers
+    });
+  }
+
+  const DB = context.env.DB;
+
+  if (!DB) {
+    return new Response(JSON.stringify({ success: false, error: 'Cloudflare D1 未綁定，無法在線上刪除。' }), {
+      status: 500,
+      headers
+    });
+  }
+
+  try {
+    const { id } = await context.request.json();
+    
+    if (!id) {
+      return new Response(JSON.stringify({ success: false, error: '缺少必要欄位 id' }), {
+        status: 400,
+        headers
+      });
+    }
+
+    await DB.prepare("DELETE FROM videos WHERE id = ?").bind(id).run();
+
+    return new Response(JSON.stringify({ success: true, message: '已成功從 D1 刪除影片！' }), { headers });
+  } catch (error) {
+    return new Response(JSON.stringify({ success: false, error: error.message }), {
+      status: 500,
+      headers
+    });
+  }
+}
+
 export async function onRequestOptions() {
   return new Response(null, {
     headers: {
       'Access-Control-Allow-Origin': '*',
-      'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+      'Access-Control-Allow-Methods': 'GET, POST, DELETE, OPTIONS',
       'Access-Control-Allow-Headers': 'Content-Type, Authorization'
     }
   });

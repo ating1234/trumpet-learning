@@ -49,6 +49,38 @@ const localDataSaverPlugin = () => ({
             res.end(JSON.stringify({ success: false, error: err.message }));
           }
         });
+      } else if (req.method === 'POST' && req.url === '/api/delete-data') {
+        let body = '';
+        req.on('data', chunk => {
+          body += chunk.toString();
+        });
+        
+        req.on('end', () => {
+          try {
+            const deleteInfo = JSON.parse(body);
+            const dataPath = path.resolve(__dirname, 'src/data/rapaData.json');
+            
+            // 讀取現有的 JSON
+            const fileData = fs.readFileSync(dataPath, 'utf-8');
+            const jsonData = JSON.parse(fileData);
+            
+            // 過濾掉要刪除的項目
+            if (deleteInfo.type === 'video') {
+              jsonData.videos = jsonData.videos.filter(v => v.id !== deleteInfo.id);
+            } else {
+              jsonData.concepts = jsonData.concepts.filter(c => c.id !== deleteInfo.id);
+            }
+            
+            // 寫回本地檔案
+            fs.writeFileSync(dataPath, JSON.stringify(jsonData, null, 2), 'utf-8');
+            
+            res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+            res.end(JSON.stringify({ success: true, message: '已成功從本地 rapaData.json 檔案中刪除該項目！' }));
+          } catch (err) {
+            res.writeHead(500, { 'Content-Type': 'application/json; charset=utf-8' });
+            res.end(JSON.stringify({ success: false, error: err.message }));
+          }
+        });
       } else {
         next();
       }

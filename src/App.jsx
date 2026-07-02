@@ -23,7 +23,8 @@ import {
   HelpCircle,
   CheckCircle,
   Globe,
-  Download
+  Download,
+  Trash2
 } from 'lucide-react';
 import { rapaData } from './data/rapaData';
 
@@ -844,6 +845,87 @@ function App() {
     }
   };
 
+  // Delete Item Logic (sync with LocalStorage, Local rapaData.json, and Cloudflare D1)
+  const handleDeleteItem = async (itemType, itemId, itemTitle) => {
+    const confirmDelete = window.confirm(`⚠️ 確定要刪除《${itemTitle}》嗎？\n此操作會從本地 LocalStorage、rapaData.json 以及雲端 D1 資料庫中刪除，且無法復原。`);
+    if (!confirmDelete) return;
+
+    try {
+      // 1. 呼叫後端 D1 刪除
+      const apiEndpoint = itemType === 'video' ? '/api/videos' : '/api/concepts';
+      let d1Success = false;
+      try {
+        const res = await fetch(apiEndpoint, {
+          method: 'DELETE',
+          headers: getHeaders(),
+          body: JSON.stringify({ id: itemId })
+        });
+        const resData = await res.json();
+        d1Success = res.ok && resData.success;
+      } catch (e) {
+        console.warn('D1 資料庫刪除失敗，這在本地開發或 D1 未綁定時是正常的：', e);
+      }
+
+      // 2. 呼叫本地 JSON 檔案刪除 (Vite middleware)
+      let localFileSuccess = false;
+      try {
+        const res = await fetch('/api/delete-data', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id: itemId, type: itemType })
+        });
+        const resData = await res.json();
+        localFileSuccess = res.ok && resData.success;
+      } catch (e) {
+        console.warn('本地檔案刪除失敗：', e);
+      }
+
+      // 3. 從 LocalStorage 刪除
+      if (itemType === 'video') {
+        const savedVideos = JSON.parse(localStorage.getItem('rapa_user_videos') || '[]');
+        const updatedVideos = savedVideos.filter(v => v.id !== itemId);
+        localStorage.setItem('rapa_user_videos', JSON.stringify(updatedVideos));
+      } else {
+        const savedConcepts = JSON.parse(localStorage.getItem('rapa_user_concepts') || '[]');
+        const updatedConcepts = savedConcepts.filter(c => c.id !== itemId);
+        localStorage.setItem('rapa_user_concepts', JSON.stringify(updatedConcepts));
+      }
+
+      // 4. 更新前端 State
+      setLocalData(prev => {
+        if (itemType === 'video') {
+          return {
+            ...prev,
+            videos: prev.videos.filter(v => v.id !== itemId)
+          };
+        } else {
+          return {
+            ...prev,
+            concepts: prev.concepts.filter(c => c.id !== itemId)
+          };
+        }
+      });
+
+      // 5. 提示結果
+      if (d1Success) {
+        alert('✨ 成功！該項目已從雲端 D1 資料庫中刪除！');
+      } else if (localFileSuccess) {
+        alert('✨ 成功！該項目已從本地的 rapaData.json 檔案中刪除！\nGit 已偵測到檔案修改，請將其推送至 GitHub 來發布更新。');
+      } else {
+        alert('🗑️ 成功！該項目已從您的瀏覽器快取中刪除，網頁已即時更新！');
+      }
+
+      // 如果正在觀看此影片詳情 Modal，關閉它
+      if (selectedVideo && selectedVideo.id === itemId) {
+        setSelectedVideo(null);
+      }
+
+    } catch (err) {
+      console.error('刪除項目失敗', err);
+      alert(`❌ 刪除項目失敗：${err.message}`);
+    }
+  };
+
   // UNVERIFIED SCREEN RENDERING (Rich Aesthetics password lock screen)
   if (!isAuthenticated) {
     return (
@@ -1344,9 +1426,33 @@ function App() {
         {/* TAB: VIDEOS (DETAIL/PLAYER MODE) */}
         {selectedVideo && (
           <div>
-            <button className="back-button" onClick={() => setSelectedVideo(null)}>
-              <ArrowLeft size={16} /> 返回列表
-            </button>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
+              <button className="back-button" onClick={() => setSelectedVideo(null)} style={{ marginBottom: 0 }}>
+                <ArrowLeft size={16} /> 返回列表
+              </button>
+              {isAuthenticated && (
+                <button 
+                  onClick={() => handleDeleteItem('video', selectedVideo.id, selectedVideo.title)}
+                  style={{ 
+                    background: 'rgba(239, 68, 68, 0.08)', 
+                    border: '1px solid rgba(239, 68, 68, 0.25)', 
+                    color: '#ef4444',
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '0.35rem',
+                    padding: '0.5rem 1rem',
+                    borderRadius: '8px',
+                    cursor: 'pointer',
+                    fontSize: '0.85rem',
+                    transition: 'all 0.2s'
+                  }}
+                  onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(239, 68, 68, 0.15)'; }}
+                  onMouseLeave={(e) => { e.currentTarget.style.background = 'rgba(239, 68, 68, 0.08)'; }}
+                >
+                  <Trash2 size={14} /> 刪除影片
+                </button>
+              )}
+            </div>
 
             <div className="detail-player-layout">
               {/* Left Column: Player & Meta */}
@@ -1491,9 +1597,35 @@ function App() {
             <div className="concepts-grid">
               {localData.concepts.map(concept => (
                 <div key={concept.id} id={concept.id} className="concept-card glass-panel" style={{ transition: 'all 0.5s' }}>
-                  <div className="concept-header">
-                    <Award className="concept-icon" size={28} />
-                    <h3 className="concept-title">{concept.title}</h3>
+                  <div className="concept-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                      <Award className="concept-icon" size={28} style={{ flexShrink: 0 }} />
+                      <h3 className="concept-title" style={{ margin: 0 }}>{concept.title}</h3>
+                    </div>
+                    {isAuthenticated && (
+                      <button
+                        onClick={() => handleDeleteItem('concept', concept.id, concept.title)}
+                        style={{
+                          background: 'rgba(239, 68, 68, 0.08)',
+                          border: '1px solid rgba(239, 68, 68, 0.2)',
+                          color: '#ef4444',
+                          padding: '0.35rem',
+                          borderRadius: '6px',
+                          cursor: 'pointer',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          transition: 'all 0.2s',
+                          marginLeft: '0.5rem',
+                          flexShrink: 0
+                        }}
+                        title="刪除此觀念項目"
+                        onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(239, 68, 68, 0.15)'; }}
+                        onMouseLeave={(e) => { e.currentTarget.style.background = 'rgba(239, 68, 68, 0.08)'; }}
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                    )}
                   </div>
                   <div className="concept-body">
                     {concept.description.split('\n\n').map((paragraph, idx) => (
