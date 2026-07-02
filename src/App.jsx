@@ -804,14 +804,41 @@ function App() {
           setFormConceptDescription('');
           setFormConceptArticleText('');
         } else {
-          alert('❌ AI 解析格式不正確，未能取得主題列表。');
+          const fallback = window.confirm(
+            "❌ AI 解析格式不正確，未能取得主題列表。\n\n" +
+            "您是否要將此文章內容帶入『手動新增觀念』，手動為其填寫標題？"
+          );
+          if (fallback) {
+            setFormConceptDescription(formConceptArticleText.trim());
+            setActiveFormTab('concept');
+            setFormConceptArticleText('');
+          }
         }
       } else {
-        alert(`❌ AI 解析文章失敗：${apiResult.message || '未知錯誤'}`);
+        const fallback = window.confirm(
+          `❌ AI 智能分析失敗：${apiResult.message || '後端解析出錯'}\n\n` +
+          `這可能是因為 API 金鑰尚未設定或暫時無法連線。\n` +
+          `您是否要將此文章內容帶入『手動新增觀念』，手動為其填寫標題？`
+        );
+        if (fallback) {
+          setFormConceptDescription(formConceptArticleText.trim());
+          setActiveFormTab('concept');
+          setFormConceptArticleText('');
+        }
       }
     } catch (err) {
       console.error('解析匯入失敗', err);
-      setParseError('文章解析與匯入失敗，請確認 API 金鑰是否設定或網路連線。');
+      const fallback = window.confirm(
+        `❌ 文章解析與匯入失敗：網路連線異常或後端崩潰。\n\n` +
+        `您是否要將此文章內容帶入『手動新增觀念』，手動為其填寫標題？`
+      );
+      if (fallback) {
+        setFormConceptDescription(formConceptArticleText.trim());
+        setActiveFormTab('concept');
+        setFormConceptArticleText('');
+      } else {
+        setParseError('文章解析與匯入失敗，請確認 API 金鑰是否設定或網路連線。');
+      }
     } finally {
       setIsParsing(false);
     }

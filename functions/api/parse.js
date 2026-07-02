@@ -217,29 +217,4 @@ export async function onRequestOptions() {
       'Access-Control-Allow-Headers': 'Content-Type, Authorization'
     }
   });
-} }
-
-      const resData = await openaiRes.json();
-      const rawText = resData.choices[0].message.content;
-      jsonResult = JSON.parse(rawText);
-    }
-
-    return new Response(JSON.stringify({ success: true, data: jsonResult }), { headers });
-
-  } catch (error) {
-    return new Response(JSON.stringify({ error: error.message }), {
-      status: 500,
-      headers
-    });
-  }
-}
-
-export async function onRequestOptions() {
-  return new Response(null, {
-    headers: {
-      'Access-Control-Allow-Origin': '*',
-      'Access-Control-Allow-Methods': 'GET, OPTIONS',
-      'Access-Control-Allow-Headers': 'Content-Type, Authorization'
-    }
-  });
 }
