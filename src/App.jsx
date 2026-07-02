@@ -91,15 +91,32 @@ function App() {
   const [localData, setLocalData] = useState(() => {
     const savedVideos = JSON.parse(localStorage.getItem('rapa_user_videos') || '[]');
     const savedConcepts = JSON.parse(localStorage.getItem('rapa_user_concepts') || '[]');
+    const deletedIds = JSON.parse(localStorage.getItem('rapa_deleted_items') || '[]');
     
     // Prevent duplicates by checking ID
     const videoMap = new Map();
-    rapaData.videos.forEach(v => videoMap.set(v.id, v));
-    savedVideos.forEach(v => videoMap.set(v.id, v));
+    rapaData.videos.forEach(v => {
+      if (!deletedIds.includes(v.id)) {
+        videoMap.set(v.id, v);
+      }
+    });
+    savedVideos.forEach(v => {
+      if (!deletedIds.includes(v.id)) {
+        videoMap.set(v.id, v);
+      }
+    });
     
     const conceptMap = new Map();
-    rapaData.concepts.forEach(c => conceptMap.set(c.id, c));
-    savedConcepts.forEach(c => conceptMap.set(c.id, c));
+    rapaData.concepts.forEach(c => {
+      if (!deletedIds.includes(c.id)) {
+        conceptMap.set(c.id, c);
+      }
+    });
+    savedConcepts.forEach(c => {
+      if (!deletedIds.includes(c.id)) {
+        conceptMap.set(c.id, c);
+      }
+    });
     
     return {
       videos: Array.from(videoMap.values()),
@@ -127,16 +144,41 @@ function App() {
       if (videoResult.success && conceptResult.success) {
         const savedVideos = JSON.parse(localStorage.getItem('rapa_user_videos') || '[]');
         const savedConcepts = JSON.parse(localStorage.getItem('rapa_user_concepts') || '[]');
+        const deletedIds = JSON.parse(localStorage.getItem('rapa_deleted_items') || '[]');
         
         const videoMap = new Map();
-        rapaData.videos.forEach(v => videoMap.set(v.id, v));
-        videoResult.data.forEach(v => videoMap.set(v.id, v));
-        savedVideos.forEach(v => videoMap.set(v.id, v));
+        rapaData.videos.forEach(v => {
+          if (!deletedIds.includes(v.id)) {
+            videoMap.set(v.id, v);
+          }
+        });
+        videoResult.data.forEach(v => {
+          if (!deletedIds.includes(v.id)) {
+            videoMap.set(v.id, v);
+          }
+        });
+        savedVideos.forEach(v => {
+          if (!deletedIds.includes(v.id)) {
+            videoMap.set(v.id, v);
+          }
+        });
         
         const conceptMap = new Map();
-        rapaData.concepts.forEach(c => conceptMap.set(c.id, c));
-        conceptResult.data.forEach(c => conceptMap.set(c.id, c));
-        savedConcepts.forEach(c => conceptMap.set(c.id, c));
+        rapaData.concepts.forEach(c => {
+          if (!deletedIds.includes(c.id)) {
+            conceptMap.set(c.id, c);
+          }
+        });
+        conceptResult.data.forEach(c => {
+          if (!deletedIds.includes(c.id)) {
+            conceptMap.set(c.id, c);
+          }
+        });
+        savedConcepts.forEach(c => {
+          if (!deletedIds.includes(c.id)) {
+            conceptMap.set(c.id, c);
+          }
+        });
         
         setLocalData({
           videos: Array.from(videoMap.values()),
@@ -148,6 +190,7 @@ function App() {
         const d1ConceptIds = new Set(conceptResult.data.map(c => c.id));
         
         savedVideos.forEach(async (v) => {
+          if (deletedIds.includes(v.id)) return; // 已經被主動刪除的，不進行背景同步
           if (!d1VideoIds.has(v.id)) {
             try {
               await fetch('/api/videos', {
@@ -163,6 +206,7 @@ function App() {
         });
 
         savedConcepts.forEach(async (c) => {
+          if (deletedIds.includes(c.id)) return; // 已經被主動刪除的，不進行背景同步
           if (!d1ConceptIds.has(c.id)) {
             try {
               await fetch('/api/concepts', {
@@ -941,6 +985,13 @@ function App() {
         const savedConcepts = JSON.parse(localStorage.getItem('rapa_user_concepts') || '[]');
         const updatedConcepts = savedConcepts.filter(c => c.id !== itemId);
         localStorage.setItem('rapa_user_concepts', JSON.stringify(updatedConcepts));
+      }
+
+      // 記錄被刪除的 ID，防止背景同步時「死而復生」
+      const deletedIds = JSON.parse(localStorage.getItem('rapa_deleted_items') || '[]');
+      if (!deletedIds.includes(itemId)) {
+        deletedIds.push(itemId);
+        localStorage.setItem('rapa_deleted_items', JSON.stringify(deletedIds));
       }
 
       // 4. 更新前端 State

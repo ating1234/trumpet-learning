@@ -128,7 +128,10 @@ export async function onRequestPost(context) {
           }],
           tools: [{
             googleSearch: {}
-          }]
+          }],
+          generationConfig: {
+            responseMimeType: "application/json"
+          }
         })
       });
 

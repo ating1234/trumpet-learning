@@ -80,8 +80,10 @@ async function doParse(context, url, content) {
   let jsonResult = null;
 
   if (GEMINI_API_KEY) {
-    const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`;
-    const geminiRes = await fetch(geminiUrl, {
+    const geminiUrl = `https://genergenerativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`;
+    // 修復拼寫錯誤的 URL (原本為 https://generativelanguage...)
+    const correctGeminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`;
+    const geminiRes = await fetch(correctGeminiUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -89,7 +91,10 @@ async function doParse(context, url, content) {
           parts: [{
             text: `${systemPrompt}\n\n現在請分析以下內容，並直接回傳純 JSON：\n${userPrompt}`
           }]
-        }]
+        }],
+        generationConfig: {
+          responseMimeType: "application/json"
+        }
       })
     });
     
