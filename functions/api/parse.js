@@ -9,11 +9,14 @@ function authorize(request, env) {
 async function doParse(context, url, content) {
   const GEMINI_API_KEY = context.env.GEMINI_API_KEY;
   const OPENAI_API_KEY = context.env.OPENAI_API_KEY;
+  const NVIDIA_API_KEY = context.env.NVIDIA_API_KEY;
+  const NVIDIA_BASE_URL = context.env.NVIDIA_BASE_URL || 'https://integrate.api.nvidia.com/v1';
+  const NVIDIA_MODEL = context.env.NVIDIA_MODEL || 'meta/llama-3.1-405b-instruct';
 
-  if (!GEMINI_API_KEY && !OPENAI_API_KEY) {
+  if (!GEMINI_API_KEY && !OPENAI_API_KEY && !NVIDIA_API_KEY) {
     return {
       error: 'no_key',
-      message: 'Cloudflare 後端尚未設定 API 金鑰。請在 Cloudflare Pages 的環境變數中設定 GEMINI_API_KEY 或 OPENAI_API_KEY。'
+      message: 'Cloudflare 後端尚未設定 API 金鑰。請在 Cloudflare Pages 的環境變數中設定 GEMINI_API_KEY、OPENAI_API_KEY 或 NVIDIA_API_KEY。'
     };
   }
 
@@ -132,6 +135,32 @@ async function doParse(context, url, content) {
     }
 
     const resData = await openaiRes.json();
+    const rawText = resData.choices[0].message.content;
+    jsonResult = JSON.parse(rawText);
+  } else if (NVIDIA_API_KEY) {
+    const nvidiaUrl = `${NVIDIA_BASE_URL.replace(/\/$/, '')}/chat/completions`;
+    const nvidiaRes = await fetch(nvidiaUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${NVIDIA_API_KEY}`
+      },
+      body: JSON.stringify({
+        model: NVIDIA_MODEL,
+        response_format: { type: "json_object" },
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: userPrompt }
+        ]
+      })
+    });
+
+    if (!nvidiaRes.ok) {
+      const errText = await nvidiaRes.text();
+      throw new Error(`NVIDIA API Error: ${errText}`);
+    }
+
+    const resData = await nvidiaRes.json();
     const rawText = resData.choices[0].message.content;
     jsonResult = JSON.parse(rawText);
   }

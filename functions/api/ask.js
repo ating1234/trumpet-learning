@@ -24,6 +24,9 @@ export async function onRequestPost(context) {
   const DB = context.env.DB;
   const GEMINI_API_KEY = context.env.GEMINI_API_KEY;
   const OPENAI_API_KEY = context.env.OPENAI_API_KEY;
+  const NVIDIA_API_KEY = context.env.NVIDIA_API_KEY;
+  const NVIDIA_BASE_URL = context.env.NVIDIA_BASE_URL || 'https://integrate.api.nvidia.com/v1';
+  const NVIDIA_MODEL = context.env.NVIDIA_MODEL || 'meta/llama-3.1-405b-instruct';
 
   try {
     const { question } = await context.request.json();
@@ -171,10 +174,36 @@ export async function onRequestPost(context) {
       const resData = await openaiRes.json();
       const rawText = resData.choices[0].message.content;
       jsonResult = JSON.parse(rawText);
+    } else if (NVIDIA_API_KEY) {
+      const nvidiaUrl = `${NVIDIA_BASE_URL.replace(/\/$/, '')}/chat/completions`;
+      const nvidiaRes = await fetch(nvidiaUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${NVIDIA_API_KEY}`
+        },
+        body: JSON.stringify({
+          model: NVIDIA_MODEL,
+          response_format: { type: "json_object" },
+          messages: [
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: userPrompt }
+          ]
+        })
+      });
+
+      if (!nvidiaRes.ok) {
+        const errText = await nvidiaRes.text();
+        throw new Error(`NVIDIA API Error: ${errText}`);
+      }
+
+      const resData = await nvidiaRes.json();
+      const rawText = resData.choices[0].message.content;
+      jsonResult = JSON.parse(rawText);
     } else {
       return new Response(JSON.stringify({ 
         success: false, 
-        error: '未配置 LLM API 金鑰。請在 Cloudflare 設定 GEMINI_API_KEY 或 OPENAI_API_KEY。' 
+        error: '未配置 LLM API 金鑰。請在 Cloudflare 設定 GEMINI_API_KEY、OPENAI_API_KEY 或 NVIDIA_API_KEY。' 
       }), { headers });
     }
 
