@@ -27,6 +27,19 @@ export async function onRequestPost(context) {
   const NVIDIA_API_KEY = context.env.NVIDIA_API_KEY;
   const NVIDIA_BASE_URL = context.env.NVIDIA_BASE_URL || 'https://integrate.api.nvidia.com/v1';
   const NVIDIA_MODEL = context.env.NVIDIA_MODEL || 'meta/llama-3.1-405b-instruct';
+  const LLM_PROVIDER = (context.env.LLM_PROVIDER || '').toLowerCase();
+
+  // 根據環境變數指定或金鑰存有狀態，決定最終要呼叫哪一個 LLM
+  let activeProvider = '';
+  if (LLM_PROVIDER === 'gemini' && GEMINI_API_KEY) activeProvider = 'gemini';
+  else if (LLM_PROVIDER === 'openai' && OPENAI_API_KEY) activeProvider = 'openai';
+  else if (LLM_PROVIDER === 'nvidia' && NVIDIA_API_KEY) activeProvider = 'nvidia';
+  else {
+    // 預設 Fallback 優先權
+    if (GEMINI_API_KEY) activeProvider = 'gemini';
+    else if (OPENAI_API_KEY) activeProvider = 'openai';
+    else if (NVIDIA_API_KEY) activeProvider = 'nvidia';
+  }
 
   try {
     const { question } = await context.request.json();
@@ -118,7 +131,7 @@ export async function onRequestPost(context) {
 
     let jsonResult = null;
 
-    if (GEMINI_API_KEY) {
+    if (activeProvider === 'gemini') {
       const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`;
       const geminiRes = await fetch(geminiUrl, {
         method: 'POST',
@@ -131,10 +144,7 @@ export async function onRequestPost(context) {
           }],
           tools: [{
             googleSearch: {}
-          }],
-          generationConfig: {
-            responseMimeType: "application/json"
-          }
+          }]
         })
       });
 
@@ -149,7 +159,7 @@ export async function onRequestPost(context) {
       const cleanJsonText = rawText.replace(/```json/g, '').replace(/```/g, '').trim();
       jsonResult = JSON.parse(cleanJsonText);
 
-    } else if (OPENAI_API_KEY) {
+    } else if (activeProvider === 'openai') {
       const openaiRes = await fetch('https://api.openai.com/v1/chat/completions', {
         method: 'POST',
         headers: {
@@ -174,7 +184,7 @@ export async function onRequestPost(context) {
       const resData = await openaiRes.json();
       const rawText = resData.choices[0].message.content;
       jsonResult = JSON.parse(rawText);
-    } else if (NVIDIA_API_KEY) {
+    } else if (activeProvider === 'nvidia') {
       const nvidiaUrl = `${NVIDIA_BASE_URL.replace(/\/$/, '')}/chat/completions`;
       const nvidiaRes = await fetch(nvidiaUrl, {
         method: 'POST',
